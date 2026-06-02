@@ -163,8 +163,8 @@ In order to do a "single-bin model" run, in which agents cite based on preferent
 - `author_max_lifetime`: used for the maximum amount of years that an author is allowed to publish. When this value is `k`, the difference between the publication year of the last paper and the publication year of the first paper of any given author cannot exceed `k`.
 - `num_authors_bag` : used for sampling the number of authors per paper. This is a CSV wherelthe header line is ignored and each subsequent line is structed as (index,number of authors). The index column is not used, and the number of authors column is used to sample a number for the number of authors for each paper.
 - `cartel_outdegree_proportion` : the proportion of out-degree that should go towards within the cartel group. Even if there are no cartel authors, make sure to set this to some value between 0 and 1. It will not be used if there are no cartel authors. **See below for important cartel information.**
-- `null_cartel` : boolean value e.g., true or false for whether to have cartel nodes cite randomly within the cartel or not. Set this to either true or falses even if there are no cartel authors. It will not be used if there are no cartel authors. **See below for important cartel information.**
-- `clonal_cartel_agent_file` : csv with clonal agent attributes. The allowed columns are num\_authors,pa\_weight,fit\_weight,num\_authors\_weight,author\_reputation\_weight,out\_degree,alpha,fitness\_lag\_duration,fitness\_peak\_value, and fitness\_peak\_duration. The order of the columns do not matter, and any subset of these columns can be used and others omitted in the csv file. **See below for important cartel information.**
+- `null_cartel` : boolean value e.g., true or false for whether to have cartel nodes cite randomly within the cartel or not. Set this to either true or falses even if there are no cartel authors. It will not be used if there are no cartel authors. True means "cartel-r" and False means "cartel-p". **See below for important cartel information.**
+- `clonal_cartel_agent_file` : csv with clonal agent attributes. The allowed columns are num\_authors,pa\_weight,fit\_weight,num\_authors\_weight,author\_reputation\_weight,out\_degree,alpha,fitness\_lag\_duration,fitness\_peak\_value, and fitness\_peak\_duration. The order of the columns do not matter, and any subset of these columns can be used and others omitted in the csv file. All cartel agents (cartel-r, cartel-p, or control) inherit these attributes. ( **See below for important cartel information.**
 
 
 #### General flags
@@ -186,6 +186,8 @@ When modifying the output nodelist manually, there are two key details that must
 Remember that
 - Cartel nodes have other cartel nodes as their generator nodes
 - Cartel nodes will try to cite a publication from each of the cartel members but will prioritize citing from those cartel author publications that are within the 2-hop neighborhood first.
+- Whether a cartel node is in a control group or not is determined through the input nodelist `cartel_id` column, i.e., control if 0.
+- Whether a non-control cartel node is cartel-r or cartel-p is determined through the `null_cartel` flag.
 
 
 ## Fitness Information
