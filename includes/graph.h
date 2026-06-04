@@ -18,6 +18,30 @@
 
 class Graph {
 public:
+  enum class NodeType { None, Seed, Agent };
+  struct NodeAttributes {
+    int year = -1;
+    double alpha = -1.0;
+    double pa_weight = -1.0;
+    double fit_weight = -1.0;
+    double num_authors_weight = -1.0;
+    double author_reputation_weight = -1.0;
+    int fitness_lag_duration = -1;
+    int fitness_peak_value = -1;
+    int fitness_peak_duration = -1;
+    int assigned_out_degree = -1;
+    int planted_nodes_line_number = -1;
+    int sampled_neighborhood_size = -1;
+    std::string generator_node_string = "no_generators";
+    int fully_random_citations = -1;
+    int author_id = -1;
+    int initial_author_reputation = -1;
+    int num_authors = -1;
+    int cartel_id = -1;
+    NodeType type = NodeType::None;
+    int in_degree = 0;
+    int out_degree = 0;
+  };
   /*
   Input: std::string edgelist, std::string nodelist, bool start_from_checkpoint,
   std::string num_authors_bag, int author_max_lifetime Output: Graph object
@@ -79,16 +103,8 @@ public:
   }
 
   const std::set<int> &GetNodeSet() const;
-  const std::unordered_map<int, std::vector<int>> &GetForwardAdjMap() const;
-  const std::unordered_map<int, std::vector<int>> &GetBackwardAdjMap() const;
-  /*
-  Input: std::string attribute_key, int node, int attribute_value
-  Output: void
-  Description: Stores an integer-based metadata attribute on a specific node
-  within the centralized NodeAttributes struct.
-  */
-  void SetIntAttribute(std::string attribute_key, int node,
-                       int attribute_value);
+  const std::vector<std::vector<int>> &GetForwardAdjList() const;
+  const std::vector<std::vector<int>> &GetBackwardAdjList() const;
   /*
   Input: None
   Output: void
@@ -96,48 +112,6 @@ public:
   authors at the beginning of the simulation.
   */
   void SaveInitialAuthorReputations();
-  /*
-  Input: std::string attribute_key, int node
-  Output: int
-  Description: Retrieves a previously stored integer metadata attribute for a
-  specific node.
-  */
-  int GetIntAttribute(std::string attribute_key, int node) const;
-  /*
-  Input: std::string attribute_key, int node, std::string attribute_value
-  Output: void
-  Description: Stores a string-based metadata attribute on a specific node.
-  */
-  void SetStringAttribute(std::string attribute_key, int node,
-                          std::string attribute_value);
-  /*
-  Input: std::string attribute_key, int node
-  Output: std::string
-  Description: Retrieves a previously stored string metadata attribute for a
-  specific node.
-  */
-  std::string GetStringAttribute(std::string attribute_key, int node) const;
-  /*
-  Input: std::string attribute_key, int node, double attribute_value
-  Output: void
-  Description: Stores a floating-point metadata attribute on a specific node.
-  */
-  void SetDoubleAttribute(std::string attribute_key, int node,
-                          double attribute_value);
-  /*
-  Input: std::string attribute_key, int node
-  Output: double
-  Description: Retrieves a previously stored floating-point metadata attribute
-  for a specific node.
-  */
-  double GetDoubleAttribute(std::string attribute_key, int node) const;
-  /*
-  Input: std::string attribute_key, int node
-  Output: bool
-  Description: Checks if a specific integer attribute has been assigned a valid
-  (non-default) value for a given node.
-  */
-  bool HasIntAttribute(std::string attribute_key, int node) const;
   /*
   Input: None
   Output: void
@@ -152,20 +126,6 @@ public:
   historical citation topology.
   */
   void ParseEdgelist();
-  /*
-  Input: int node
-  Output: int
-  Description: Returns the current in-degree (number of citations received) for
-  a specific node.
-  */
-  int GetInDegree(int node) const;
-  /*
-  Input: int node
-  Output: int
-  Description: Returns the current out-degree (number of citations made) for a
-  specific node.
-  */
-  int GetOutDegree(int node) const;
   /*
   Input: None
   Output: void
@@ -186,6 +146,179 @@ public:
   Description: Injects a new empty node into the graph, initializing its
   attribute struct.
   */
+
+  // --- DIRECT ATTRIBUTE ACCESSORS ---
+  inline NodeAttributes &GetNodeAttr(int node) { return node_attributes[node]; }
+  inline const NodeAttributes &GetNodeAttr(int node) const {
+    return node_attributes[node];
+  }
+
+  inline int GetYear(int node) const { return node_attributes[node].year; }
+  inline void SetYear(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].year = val;
+  }
+
+  inline double GetAlpha(int node) const { return node_attributes[node].alpha; }
+  inline void SetAlpha(int node, double val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].alpha = val;
+  }
+
+  inline double GetPaWeight(int node) const {
+    return node_attributes[node].pa_weight;
+  }
+  inline void SetPaWeight(int node, double val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].pa_weight = val;
+  }
+
+  inline double GetFitWeight(int node) const {
+    return node_attributes[node].fit_weight;
+  }
+  inline void SetFitWeight(int node, double val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].fit_weight = val;
+  }
+
+  inline double GetNumAuthorsWeight(int node) const {
+    return node_attributes[node].num_authors_weight;
+  }
+  inline void SetNumAuthorsWeight(int node, double val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].num_authors_weight = val;
+  }
+
+  inline double GetAuthorReputationWeight(int node) const {
+    return node_attributes[node].author_reputation_weight;
+  }
+  inline void SetAuthorReputationWeight(int node, double val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].author_reputation_weight = val;
+  }
+
+  inline int GetFitnessLagDuration(int node) const {
+    return node_attributes[node].fitness_lag_duration;
+  }
+  inline void SetFitnessLagDuration(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].fitness_lag_duration = val;
+  }
+
+  inline int GetFitnessPeakValue(int node) const {
+    return node_attributes[node].fitness_peak_value;
+  }
+  inline void SetFitnessPeakValue(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].fitness_peak_value = val;
+  }
+
+  inline int GetFitnessPeakDuration(int node) const {
+    return node_attributes[node].fitness_peak_duration;
+  }
+  inline void SetFitnessPeakDuration(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].fitness_peak_duration = val;
+  }
+
+  inline int GetAssignedOutDegree(int node) const {
+    return node_attributes[node].assigned_out_degree;
+  }
+  inline void SetAssignedOutDegree(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].assigned_out_degree = val;
+  }
+
+  inline int GetPlantedNodesLineNumber(int node) const {
+    return node_attributes[node].planted_nodes_line_number;
+  }
+  inline void SetPlantedNodesLineNumber(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].planted_nodes_line_number = val;
+  }
+  inline bool HasPlantedNodesLineNumber(int node) const {
+    return node_attributes[node].planted_nodes_line_number != -1;
+  }
+
+  inline int GetSampledNeighborhoodSize(int node) const {
+    return node_attributes[node].sampled_neighborhood_size;
+  }
+  inline void SetSampledNeighborhoodSize(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].sampled_neighborhood_size = val;
+  }
+
+  inline const std::string &GetGeneratorNodeString(int node) const {
+    return node_attributes[node].generator_node_string;
+  }
+  inline void SetGeneratorNodeString(int node, const std::string &val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].generator_node_string = val;
+  }
+
+  inline int GetFullyRandomCitations(int node) const {
+    return node_attributes[node].fully_random_citations;
+  }
+  inline void SetFullyRandomCitations(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].fully_random_citations = val;
+  }
+
+  inline int GetAuthorId(int node) const {
+    return node_attributes[node].author_id;
+  }
+  inline void SetAuthorId(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].author_id = val;
+  }
+
+  inline int GetInitialAuthorReputation(int node) const {
+    return node_attributes[node].initial_author_reputation;
+  }
+  inline void SetInitialAuthorReputation(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].initial_author_reputation = val;
+  }
+
+  inline int GetNumAuthors(int node) const {
+    return node_attributes[node].num_authors;
+  }
+  inline void SetNumAuthors(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].num_authors = val;
+  }
+
+  inline int GetCartelIdAttr(int node) const {
+    return node_attributes[node].cartel_id;
+  }
+  inline void SetCartelIdAttr(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].cartel_id = val;
+  }
+
+  inline NodeType GetType(int node) const { return node_attributes[node].type; }
+  inline void SetType(int node, NodeType val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].type = val;
+  }
+
+  inline int GetInDegree(int node) const {
+    return node_attributes[node].in_degree;
+  }
+  inline void SetInDegree(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].in_degree = val;
+  }
+
+  inline int GetOutDegree(int node) const {
+    return node_attributes[node].out_degree;
+  }
+  inline void SetOutDegree(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].out_degree = val;
+  }
+  // --- END DIRECT ATTRIBUTE ACCESSORS ---
+
   void AddNode(int u);
   /*
   Input: None
@@ -299,35 +432,21 @@ protected:
   std::unordered_map<int, std::vector<int>> publication_count_to_author_map;
   int next_author_id = 0;
   int lotka_exponent = 2;
-  std::unordered_map<int, std::vector<int>> forward_adj_map;
-  std::unordered_map<int, std::vector<int>> backward_adj_map;
+  std::vector<std::vector<int>> forward_adj_list;
+  std::vector<std::vector<int>> backward_adj_list;
   std::unordered_map<int, int> author_birth_year_map;
   std::unordered_map<int, std::vector<int>> author_publication_map;
   std::unordered_map<int, int> author_reputation_map;
-  struct NodeAttributes {
-    int year = -1;
-    double alpha = -1.0;
-    double pa_weight = -1.0;
-    double fit_weight = -1.0;
-    double num_authors_weight = -1.0;
-    double author_reputation_weight = -1.0;
-    int fitness_lag_duration = -1;
-    int fitness_peak_value = -1;
-    int fitness_peak_duration = -1;
-    int assigned_out_degree = -1;
-    int planted_nodes_line_number = -1;
-    int sampled_neighborhood_size = -1;
-    std::string generator_node_string = "no_generators";
-    int fully_random_citations = -1;
-    int author_id = -1;
-    int initial_author_reputation = -1;
-    int num_authors = -1;
-    int cartel_id = -1;
-    std::string type = "";
-    int in_degree = 0;
-    int out_degree = 0;
-  };
-  std::unordered_map<int, NodeAttributes> node_attributes;
+  std::vector<NodeAttributes> node_attributes;
+  inline void EnsureNodeCapacity(int node) {
+    if (static_cast<size_t>(node) >= node_attributes.size()) {
+      size_t new_size =
+          std::max((size_t)node + 1, node_attributes.size() * 2 + 1);
+      node_attributes.resize(new_size);
+      forward_adj_list.resize(new_size);
+      backward_adj_list.resize(new_size);
+    }
+  }
   std::unordered_map<int, int> author_cartel_map;
   std::unordered_map<int, std::set<int>> cartel_author_map;
 };

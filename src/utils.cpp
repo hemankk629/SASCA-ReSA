@@ -1,13 +1,14 @@
 #include "utils.h"
 
-ClonalCartelAgent Utils::ParseClonalCartelAgentStruct(std::string filepath) {
+ClonalCartelAgent
+Utils::ParseClonalCartelAgentStruct(std::string_view filepath) {
   ClonalCartelAgent agent;
   char delimiter = Utils::GetDelimiter(filepath);
   std::unordered_map<int, std::string> index_to_header_map =
       Utils::GetIndexToHeaderMap(delimiter, filepath);
   std::unordered_map<std::string, int> header_to_index_map =
       Utils::GetHeaderToIndexMap(delimiter, filepath);
-  std::ifstream clonal_cartel_agent_stream(filepath);
+  std::ifstream clonal_cartel_agent_stream{std::string(filepath)};
   std::string line;
   int line_no = 1;
   while (std::getline(clonal_cartel_agent_stream, line)) {
@@ -60,10 +61,10 @@ ClonalCartelAgent Utils::ParseClonalCartelAgentStruct(std::string filepath) {
   return agent;
 }
 
-std::vector<int> Utils::ParseOutDegreeBag(std::string filepath) {
+std::vector<int> Utils::ParseOutDegreeBag(std::string_view filepath) {
   std::vector<int> vec;
   char delimiter = ',';
-  std::ifstream out_degree_bag_stream(filepath);
+  std::ifstream out_degree_bag_stream{std::string(filepath)};
   std::string line;
   int line_no = 0;
   while (std::getline(out_degree_bag_stream, line)) {
@@ -86,7 +87,7 @@ std::vector<int> Utils::ParseOutDegreeBag(std::string filepath) {
 
 std::unordered_map<
     int, std::unordered_map<int, std::unordered_map<std::string, std::string>>>
-Utils::ParsePlantedNodes(std::string filepath) {
+Utils::ParsePlantedNodes(std::string_view filepath) {
   std::unordered_map<
       int,
       std::unordered_map<int, std::unordered_map<std::string, std::string>>>
@@ -96,7 +97,7 @@ Utils::ParsePlantedNodes(std::string filepath) {
       Utils::GetIndexToHeaderMap(delimiter, filepath);
   std::unordered_map<std::string, int> header_to_index_map =
       Utils::GetHeaderToIndexMap(delimiter, filepath);
-  std::ifstream planted_nodes_stream(filepath);
+  std::ifstream planted_nodes_stream{std::string(filepath)};
   std::string line;
   int line_no = 1;
   while (std::getline(planted_nodes_stream, line)) {
@@ -125,10 +126,10 @@ Utils::ParsePlantedNodes(std::string filepath) {
 }
 
 std::unordered_map<int, int>
-Utils::ParseRecencyProbabilities(std::string filepath) {
+Utils::ParseRecencyProbabilities(std::string_view filepath) {
   std::unordered_map<int, int> counts_map;
   char delimiter = ',';
-  std::ifstream stream(filepath);
+  std::ifstream stream{std::string(filepath)};
   std::string line;
   int line_no = 0;
   while (std::getline(stream, line)) {

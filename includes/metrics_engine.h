@@ -72,8 +72,8 @@ public:
   */
   static void
   FillInDegreeSpan(Graph *graph,
-                   const std::unordered_map<int, int> &continuous_node_mapping,
-                   std::span<int> in_degree_span);
+                   const std::vector<int> &reverse_continuous_node_mapping,
+                   std::span<int> in_degree_span, int current_graph_size);
   /*
   Input: Graph *graph, const std::unordered_map<int, int>
   &continuous_node_mapping, int current_year, std::span<int> fitness_span, int
@@ -83,8 +83,8 @@ public:
   current temporal relevance.
   */
   static void FillFitnessSpan(
-      Graph *graph, const std::unordered_map<int, int> &continuous_node_mapping,
-      int current_year, std::span<int> fitness_span, int fitness_decay_alpha);
+      Graph *graph, const std::vector<int> &reverse_continuous_node_mapping,
+      int current_year, std::span<int> fitness_span, int fitness_decay_alpha, int current_graph_size);
   /*
   Input: Graph *graph, const std::unordered_map<int, int>
   &continuous_node_mapping, std::span<int> author_reputation_span Output: void
@@ -93,8 +93,8 @@ public:
   calculated reputation values for each corresponding node.
   */
   static void FillAuthorReputationSpan(
-      Graph *graph, const std::unordered_map<int, int> &continuous_node_mapping,
-      std::span<int> author_reputation_span);
+      Graph *graph, const std::vector<int> &reverse_continuous_node_mapping,
+      std::span<int> author_reputation_span, int current_graph_size);
 
   /*
   Input: std::unordered_map<int, double> &cached_results, std::span<int>

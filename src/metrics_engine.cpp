@@ -8,56 +8,48 @@
 #include <span>
 
 void MetricsEngine::FillInDegreeSpan(
-    Graph *graph, const std::unordered_map<int, int> &continuous_node_mapping,
-    std::span<int> in_degree_span) {
-  for (auto const &node : graph->GetNodeSet()) {
-    if (!continuous_node_mapping.contains(node)) {
-      std::cerr << std::to_string(node) << " not in continuous node mapping "
-                << std::endl;
-    }
-    int continuous_id = continuous_node_mapping.at(node);
-    in_degree_span[continuous_id] = graph->GetInDegree(node);
+    Graph *graph, const std::vector<int> &reverse_continuous_node_mapping,
+    std::span<int> in_degree_span, int current_graph_size) {
+#pragma omp parallel for simd
+  for (int i = 0; i < current_graph_size; i++) {
+    int node = reverse_continuous_node_mapping[i];
+    in_degree_span[i] = graph->GetInDegree(node);
   }
 }
 
 void MetricsEngine::FillAuthorReputationSpan(
-    Graph *graph, const std::unordered_map<int, int> &continuous_node_mapping,
-    std::span<int> author_reputation_span) {
+    Graph *graph, const std::vector<int> &reverse_continuous_node_mapping,
+    std::span<int> author_reputation_span, int current_graph_size) {
   graph->ComputeAuthorReputations();
-  for (auto const &node : graph->GetNodeSet()) {
-    if (!continuous_node_mapping.contains(node)) {
-      std::cerr << std::to_string(node) << " not in continuous node mapping "
-                << std::endl;
-    }
-    int continuous_id = continuous_node_mapping.at(node);
-    author_reputation_span[continuous_id] =
-        graph->GetAuthorReputationForNode(node);
+#pragma omp parallel for simd
+  for (int i = 0; i < current_graph_size; i++) {
+    int node = reverse_continuous_node_mapping[i];
+    author_reputation_span[i] = graph->GetAuthorReputationForNode(node);
   }
 }
 
 void MetricsEngine::FillFitnessSpan(
-    Graph *graph, const std::unordered_map<int, int> &continuous_node_mapping,
-    int current_year, std::span<int> fitness_span, int fitness_decay_alpha) {
-  for (auto const &node : graph->GetNodeSet()) {
-    int fitness_peak_value = graph->GetIntAttribute("fitness_peak_value", node);
-    int fitness_lag_duration =
-        graph->GetIntAttribute("fitness_lag_duration", node);
-    int fitness_peak_duration =
-        graph->GetIntAttribute("fitness_peak_duration", node);
-    int published_year = graph->GetIntAttribute("year", node);
-    int continuous_index = continuous_node_mapping.at(node);
+    Graph *graph, const std::vector<int> &reverse_continuous_node_mapping,
+    int current_year, std::span<int> fitness_span, int fitness_decay_alpha, int current_graph_size) {
+#pragma omp parallel for simd
+  for (int i = 0; i < current_graph_size; i++) {
+    int node = reverse_continuous_node_mapping[i];
+    int fitness_peak_value = graph->GetFitnessPeakValue(node);
+    int fitness_lag_duration = graph->GetFitnessLagDuration(node);
+    int fitness_peak_duration = graph->GetFitnessPeakDuration(node);
+    int published_year = graph->GetYear(node);
     if (published_year + fitness_lag_duration > current_year) {
-      fitness_span[continuous_index] = 1;
+      fitness_span[i] = 1;
     } else if (published_year + fitness_lag_duration + fitness_peak_duration >=
                current_year) {
-      fitness_span[continuous_index] = fitness_peak_value;
+      fitness_span[i] = fitness_peak_value;
     } else {
       double decayed_fitness_value =
           fitness_peak_value /
           pow(current_year - published_year - fitness_lag_duration -
                   fitness_peak_duration + 1,
               fitness_decay_alpha);
-      fitness_span[continuous_index] = decayed_fitness_value;
+      fitness_span[i] = decayed_fitness_value;
     }
   }
 }
@@ -71,8 +63,7 @@ void MetricsEngine::PopulateWeightSpans(
   if (preferential_weight != -1 && fitness_weight != -1 &&
       num_authors_weight != -1 && author_reputation_weight != -1) {
 #pragma omp parallel for
-    for (int i = 0; i < pa_weight_span.size(); i++) {
-      pcg32 &generator = Utils::GetThreadLocalPRNG();
+    for (size_t i = 0; i < pa_weight_span.size(); i++) {
       double pa_uniform = preferential_weight;
       double fit_uniform = fitness_weight;
       double num_authors_uniform = num_authors_weight;
@@ -87,7 +78,7 @@ void MetricsEngine::PopulateWeightSpans(
     }
   } else {
 #pragma omp parallel for
-    for (int i = 0; i < pa_weight_span.size(); i++) {
+    for (size_t i = 0; i < pa_weight_span.size(); i++) {
       pcg32 &generator = Utils::GetThreadLocalPRNG();
       std::uniform_real_distribution<double> weights_uniform_distribution{0, 1};
       double pa_uniform = weights_uniform_distribution(generator);
@@ -109,8 +100,7 @@ void MetricsEngine::PopulateWeightSpans(
 void MetricsEngine::PopulateNumAuthorsSpan(Graph *graph,
                                            std::span<int> num_authors_span) {
 #pragma omp parallel for
-  for (int i = 0; i < num_authors_span.size(); i++) {
-    pcg32 &generator = Utils::GetThreadLocalPRNG();
+  for (size_t i = 0; i < num_authors_span.size(); i++) {
     num_authors_span[i] = graph->GetNextNumAuthors();
   }
 }
@@ -129,7 +119,7 @@ void MetricsEngine::PopulateFitnessSpans(
                                                                             1);
 
 #pragma omp parallel for
-  for (int i = 0; i < fitness_lag_duration_span.size(); i++) {
+  for (size_t i = 0; i < fitness_lag_duration_span.size(); i++) {
     pcg32 &generator = Utils::GetThreadLocalPRNG();
     fitness_lag_duration_span[i] =
         fitness_lag_duration_uniform_distribution(generator);
@@ -154,13 +144,12 @@ void MetricsEngine::PopulateAlphaSpan(std::span<double> alpha_span,
 
   if (!use_alpha) {
 #pragma omp parallel for
-    for (int i = 0; i < alpha_span.size(); i++) {
-      pcg32 &generator = Utils::GetThreadLocalPRNG();
+    for (size_t i = 0; i < alpha_span.size(); i++) {
       alpha_span[i] = -1;
     }
   } else if (alpha == -1) {
 #pragma omp parallel for
-    for (int i = 0; i < alpha_span.size(); i++) {
+    for (size_t i = 0; i < alpha_span.size(); i++) {
       pcg32 &generator = Utils::GetThreadLocalPRNG();
       double alpha_uniform = alpha_uniform_distribution(generator);
       alpha_uniform = std::round(alpha_uniform * 1000.0) / 1000.0;
@@ -168,7 +157,7 @@ void MetricsEngine::PopulateAlphaSpan(std::span<double> alpha_span,
     }
   } else if (minimum_alpha > 0) {
 #pragma omp parallel for
-    for (int i = 0; i < alpha_span.size(); i++) {
+    for (size_t i = 0; i < alpha_span.size(); i++) {
       pcg32 &generator = Utils::GetThreadLocalPRNG();
       std::uniform_real_distribution<double> minimum_alpha_uniform_distribution{
           minimum_alpha, 1};
@@ -177,7 +166,7 @@ void MetricsEngine::PopulateAlphaSpan(std::span<double> alpha_span,
     }
   } else {
 #pragma omp parallel for
-    for (int i = 0; i < alpha_span.size(); i++) {
+    for (size_t i = 0; i < alpha_span.size(); i++) {
       alpha_span[i] = alpha;
     }
   }
@@ -189,7 +178,7 @@ void MetricsEngine::PopulateOutDegreeSpan(
   std::uniform_int_distribution<int> outdegree_index_uniform_distribution{
       0, (int)(out_degree_bag_vec.size() - 1)};
 #pragma omp parallel for
-  for (int i = 0; i < out_degree_span.size(); i++) {
+  for (size_t i = 0; i < out_degree_span.size(); i++) {
     pcg32 &generator = Utils::GetThreadLocalPRNG();
     int index_uniform = outdegree_index_uniform_distribution(generator);
     out_degree_span[i] = out_degree_bag_vec[index_uniform];
@@ -201,7 +190,7 @@ void MetricsEngine::CalculateTanhScores(
     std::span<double> dst_span, double peak_constant, double delay_constant) {
   double sum = 0;
 #pragma omp parallel for reduction(+ : sum)
-  for (int i = 0; i < src_span.size(); i++) {
+  for (size_t i = 0; i < src_span.size(); i++) {
     double current_dst = -1;
     if (src_span[i] < 10000) {
       current_dst = cached_results[src_span[i]];
@@ -214,7 +203,7 @@ void MetricsEngine::CalculateTanhScores(
     sum += current_dst;
   }
 #pragma omp parallel for
-  for (int i = 0; i < src_span.size(); i++) {
+  for (size_t i = 0; i < src_span.size(); i++) {
     dst_span[i] /= sum;
   }
 }
@@ -224,13 +213,13 @@ void MetricsEngine::CalculateExpScores(
     std::span<double> dst_span, double gamma) {
   double sum = 0;
 #pragma omp parallel for reduction(+ : sum)
-  for (int i = 0; i < src_span.size(); i++) {
+  for (size_t i = 0; i < src_span.size(); i++) {
     double current_dst = std::max(std::pow(src_span[i], gamma), 1.0) + 1;
     dst_span[i] = current_dst;
     sum += current_dst;
   }
 #pragma omp parallel for
-  for (int i = 0; i < src_span.size(); i++) {
+  for (size_t i = 0; i < src_span.size(); i++) {
     dst_span[i] /= sum;
   }
 }

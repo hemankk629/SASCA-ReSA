@@ -74,7 +74,7 @@ public:
 
   Graph *graph;
   std::unordered_map<int, int> continuous_node_mapping;
-  std::unordered_map<int, int> reverse_continuous_node_mapping;
+  std::vector<int> reverse_continuous_node_mapping;
   int start_year;
   int next_node_id;
   int initial_next_node_id;
@@ -247,17 +247,16 @@ public:
   */
   void ReadPlantedNodes();
   std::unordered_map<int, int> BuildContinuousNodeMapping(Graph *graph);
-  std::unordered_map<int, int>
-  ReverseMapping(std::unordered_map<int, int> mapping);
+  std::vector<int> ReverseMapping(const std::unordered_map<int, int> &mapping);
   /*
   Input: Graph *graph, const std::vector<int> &base_vec, const
   std::unordered_map<int, int> &reverse_continuous_node_mapping Output:
   std::vector<int> (complement nodes) Description: Returns all continuous node
   IDs in the graph that are NOT present in the provided base vector.
   */
-  std::vector<int> GetComplement(
-      Graph *graph, const std::vector<int> &base_vec,
-      const std::unordered_map<int, int> &reverse_continuous_node_mapping);
+  std::vector<int>
+  GetComplement(Graph *graph, const std::vector<int> &base_vec,
+                const std::vector<int> &reverse_continuous_node_mapping);
   /*
   Input: Graph *graph
   Output: int (total projected size)
@@ -273,9 +272,9 @@ public:
   'generators' (sources of citations) for the current simulation step based on
   configuration.
   */
-  std::vector<int> GetGeneratorNodes(
-      Graph *graph,
-      const std::unordered_map<int, int> &reverse_continuous_node_mapping);
+  std::vector<int>
+  GetGeneratorNodes(Graph *graph,
+                    const std::vector<int> &reverse_continuous_node_mapping);
   /*
   Input: Graph *graph, int graph_size, const std::unordered_map<int, int>
   &reverse_continuous_node_mapping, std::span<int> in_degree_span,
@@ -287,7 +286,7 @@ public:
   */
   std::vector<int> GetEligibleGeneratorNodes(
       Graph *graph, int graph_size,
-      const std::unordered_map<int, int> &reverse_continuous_node_mapping,
+      const std::vector<int> &reverse_continuous_node_mapping,
       std::span<int> in_degree_span, std::span<int> fitness_span,
       int in_degree_threshold, int fitness_threshold, int start_year,
       int current_year, int recency_threshold);
@@ -489,10 +488,9 @@ public:
       int fitness_peak_uniform = 1000; // MARK: hard coded to be static fitness
       int fitness_power = 1;
 
-      graph->SetIntAttribute("fitness_lag_duration", node, fitness_lag_uniform);
-      graph->SetIntAttribute("fitness_peak_duration", node,
-                             fitness_peak_uniform);
-      graph->SetIntAttribute("fitness_peak_value", node, fitness_power);
+      graph->SetFitnessLagDuration(node, fitness_lag_uniform);
+      graph->SetFitnessPeakDuration(node, fitness_peak_uniform);
+      graph->SetFitnessPeakValue(node, fitness_power);
     }
   }
 
@@ -511,13 +509,9 @@ public:
                                   Log::error);
       return false;
     }
-    if constexpr (std::is_same_v<T1, std::string>) {
-      this->logger.WriteToLogFile(
-          std::format("{}: {}", argument_name, argument_value), Log::info);
-    } else {
-      this->logger.WriteToLogFile(
-          std::format("{}: {}", argument_name, argument_value), Log::info);
-    }
+    std::ostringstream oss;
+    oss << argument_name << ": " << argument_value;
+    this->logger.WriteToLogFile(oss.str(), Log::info);
     return true;
   }
 
@@ -528,7 +522,7 @@ public:
       int fitness_lag_uniform =
           this->fitness_lag_duration_uniform_distribution(generator);
       // int fitness_lag_uniform = 0; // MARK: hard coded to be static fitness
-      graph->SetIntAttribute("fitness_lag_duration", node, fitness_lag_uniform);
+      graph->SetFitnessLagDuration(node, fitness_lag_uniform);
     }
   }
 
@@ -540,8 +534,7 @@ public:
           this->fitness_peak_duration_uniform_distribution(generator);
       // int fitness_peak_uniform = 1000; // MARK: hard coded to be static
       // fitness
-      graph->SetIntAttribute("fitness_peak_duration", node,
-                             fitness_peak_uniform);
+      graph->SetFitnessPeakDuration(node, fitness_peak_uniform);
     }
   }
 
@@ -577,7 +570,7 @@ public:
       double base_right = pow(this->fitness_value_min, adjusted_alpha);
       double exponent = 1.0 / adjusted_alpha;
       int fitness_power = std::round(pow(base_left + base_right, exponent));
-      graph->SetIntAttribute("fitness_peak_value", node, fitness_power);
+      graph->SetFitnessPeakValue(node, fitness_power);
     }
   }
 
