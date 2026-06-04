@@ -39,6 +39,9 @@ else()
         ${CMAKE_SOURCE_DIR}/src/abm.cpp
         ${CMAKE_SOURCE_DIR}/src/graph.cpp
         ${CMAKE_SOURCE_DIR}/src/utils.cpp
+        ${CMAKE_SOURCE_DIR}/src/metrics_engine.cpp
+        ${CMAKE_SOURCE_DIR}/src/neighborhood_search.cpp
+        ${CMAKE_SOURCE_DIR}/src/citation_engine.cpp
     )
     #[[ CONSTANTS END ]]
 

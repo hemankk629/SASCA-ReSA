@@ -1,2002 +1,1257 @@
 #include "abm.h"
+#include "metrics_engine.h"
+#include "utils.h"
+#include <format>
 #include <iomanip>
-#pragma omp declare reduction(merge_int_pair_vecs : std::vector<std::pair<int, int>> : omp_out.insert(omp_out.end(), omp_in.begin(), omp_in.end()))
-#pragma omp declare reduction(merge_str_int_pair_vecs : std::vector<std::pair<std::string, int>> : omp_out.insert(omp_out.end(), omp_in.begin(), omp_in.end()))
-#pragma omp declare reduction(merge_int_vecs : std::vector<int> : omp_out.insert(omp_out.end(), omp_in.begin(), omp_in.end()))
+#include <span>
+#pragma omp declare reduction(                                                 \
+        merge_int_pair_vecs : std::vector<std::pair<int, int>> : omp_out       \
+            .insert(omp_out.end(), omp_in.begin(), omp_in.end()))
+#pragma omp declare reduction(                                                 \
+        merge_str_int_pair_vecs : std::vector<                                 \
+                std::pair<std::string, int>> : omp_out                         \
+            .insert(omp_out.end(), omp_in.begin(), omp_in.end()))
+#pragma omp declare reduction(                                                 \
+        merge_int_vecs : std::vector<int> : omp_out.insert(                    \
+                omp_out.end(), omp_in.begin(), omp_in.end()))
 
-#pragma omp declare reduction(custom_merge_vec_int : std::vector<std::pair<int, int>> : omp_out.insert(omp_out.end(), omp_in.begin(), omp_in.end())) initializer(omp_priv = decltype(omp_orig){})
-
-int ABM::WriteToLogFile(std::string message, Log message_type) {
-    if(this->log_level >= message_type) {
-        std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now();
-        std::string log_message_prefix;
-        if(message_type == Log::info) {
-            log_message_prefix = "[INFO]";
-        } else if(message_type == Log::debug) {
-            log_message_prefix = "[DEBUG]";
-        } else if(message_type == Log::error) {
-            log_message_prefix = "[ERROR]";
-        }
-        auto days_elapsed = std::chrono::duration_cast<std::chrono::days>(now - this->start_time);
-        auto hours_elapsed = std::chrono::duration_cast<std::chrono::hours>(now - this->start_time - days_elapsed);
-        auto minutes_elapsed = std::chrono::duration_cast<std::chrono::minutes>(now - this->start_time - days_elapsed - hours_elapsed);
-        auto seconds_elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - this->start_time - days_elapsed - hours_elapsed - minutes_elapsed);
-        auto total_seconds_elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - this->start_time);
-        log_message_prefix += "[";
-        log_message_prefix += std::to_string(days_elapsed.count());
-        log_message_prefix += "-";
-        log_message_prefix += std::to_string(hours_elapsed.count());
-        log_message_prefix += ":";
-        log_message_prefix += std::to_string(minutes_elapsed.count());
-        log_message_prefix += ":";
-        log_message_prefix += std::to_string(seconds_elapsed.count());
-        log_message_prefix += "]";
-
-        log_message_prefix += "(t=";
-        log_message_prefix += std::to_string(total_seconds_elapsed.count());
-        log_message_prefix += "s)";
-        this->log_file_handle << log_message_prefix << " " << message << '\n';
-
-        if(this->num_calls_to_log_write % 1 == 0) {
-            std::flush(this->log_file_handle);
-        }
-        this->num_calls_to_log_write ++;
-    }
-    return 0;
-}
-
-void ABM::ReadPlantedNodes() {
-    char delimiter = Utils::GetDelimiter(this->planted_nodes);
-    std::unordered_map<int, std::string> index_to_header_map = Utils::GetIndexToHeaderMap(delimiter, this->planted_nodes);
-    std::unordered_map<std::string, int> header_to_index_map = Utils::GetHeaderToIndexMap(delimiter, this->planted_nodes);
-    std::ifstream planted_nodes_stream(this->planted_nodes);
-    std::string line;
-    int line_no = 1;
-    while(std::getline(planted_nodes_stream, line)) {
-        std::stringstream ss(line);
-        std::string current_value;
-        std::vector<std::string> current_line;
-        while(std::getline(ss, current_value, delimiter)) {
-            current_line.push_back(current_value);
-        }
-        if(current_line.size() == 0) {
-            break;
-        }
-        if (line_no > 1) {
-            int year_header_index = header_to_index_map["year"];
-            int current_year = std::stoi(current_line[year_header_index]);
-            for(size_t i = 0; i < current_line.size(); i ++) {
-                if ((int)i != year_header_index) {
-                    this->planted_nodes_map[current_year][line_no][index_to_header_map[i]] = current_line[i];
-                }
-            }
-        }
-        line_no += 1;
-    }
-}
-
-void ABM::ReadOutDegreeBag() {
-    char delimiter = ',';
-    std::ifstream out_degree_bag_stream(this->out_degree_bag);
-    std::string line;
-    int line_no = 0;
-    while(std::getline(out_degree_bag_stream, line)) {
-        std::stringstream ss(line);
-        std::string current_value;
-        std::vector<std::string> current_line;
-        while(std::getline(ss, current_value, delimiter)) {
-            current_line.push_back(current_value);
-        }
-        if(current_line.size() == 0) {
-            break;
-        }
-        if(line_no != 0) {
-            this->out_degree_bag_vec.push_back(std::stoi(current_line[1]));
-        }
-        line_no ++;
-    }
-}
-
+#pragma omp declare reduction(                                                 \
+        custom_merge_vec_int : std::vector<std::pair<int, int>> : omp_out      \
+            .insert(omp_out.end(), omp_in.begin(), omp_in.end()))              \
+    initializer(omp_priv = decltype(omp_orig){})
 
 std::unordered_map<int, double> ABM::GetBinnedRecencyProbabilities() {
-    std::unordered_map<int, double> binned_recency_probabilities;
-    double binned_recency_sum = 0;
-    for(const auto& [year_diff, count] : this->recency_counts_map) {
-        int current_bin_index = this->GetBinIndex(year_diff);
-        binned_recency_probabilities[current_bin_index] += count;
-        binned_recency_sum += count;
-    }
-    for(const auto& recency_pair : binned_recency_probabilities) {
-        binned_recency_probabilities[recency_pair.first] /= binned_recency_sum;
-    }
-    return binned_recency_probabilities;
+  std::unordered_map<int, double> binned_recency_probabilities;
+  double binned_recency_sum = 0;
+  for (const auto &[year_diff, count] : this->recency_counts_map) {
+    int current_bin_index = this->neighborhood_search->GetBinIndex(year_diff);
+    binned_recency_probabilities[current_bin_index] += count;
+    binned_recency_sum += count;
+  }
+  for (const auto &recency_pair : binned_recency_probabilities) {
+    binned_recency_probabilities[recency_pair.first] /= binned_recency_sum;
+  }
+  return binned_recency_probabilities;
 }
 
+std::unordered_map<int, int> ABM::BuildContinuousNodeMapping(Graph *graph) {
+  this->next_node_id = 0;
+  std::unordered_map<int, int> continuous_node_mapping;
+  for (auto const &node : this->graph->GetNodeSet()) {
+    this->continuous_node_mapping[node] = this->next_node_id;
+    this->next_node_id++;
+  }
+  return this->continuous_node_mapping;
+}
 
-void ABM::ReadRecencyProbabilities() {
-    char delimiter = ',';
-    std::ifstream recency_probabilities_stream(this->recency_table);
-    std::string line;
-    int line_no = 0;
-    while(std::getline(recency_probabilities_stream, line)) {
-        std::stringstream ss(line);
-        std::string current_value;
-        std::vector<std::string> current_line;
-        while(std::getline(ss, current_value, delimiter)) {
-            current_line.push_back(current_value);
+std::unordered_map<int, int>
+ABM::ReverseMapping(std::unordered_map<int, int> mapping) {
+  std::unordered_map<int, int> reverse_mapping;
+  for (auto const &[key, val] : mapping) {
+    reverse_mapping[val] = key;
+  }
+  return reverse_mapping;
+}
+
+void ABM::InitializeFitness(Graph *graph) {
+  this->AssignPeakFitnessValues(this->graph, this->graph->GetNodeSet());
+  this->AssignFitnessLagDuration(this->graph, this->graph->GetNodeSet());
+  this->AssignFitnessPeakDuration(this->graph, this->graph->GetNodeSet());
+}
+
+std::unordered_map<int, int>
+ABM::PlantNodes(Graph *graph, std::span<double> pa_weight_span,
+                std::span<double> fit_weight_span,
+                std::span<double> num_authors_weight_span,
+                std::span<double> author_reputation_weight_span,
+                std::span<int> out_degree_span, std::span<double> alpha_span,
+                std::span<int> fitness_lag_duration_span,
+                std::span<int> fitness_peak_value_span,
+                std::span<int> fitness_peak_duration_span,
+                std::span<int> num_authors_span,
+                std::span<int> planted_author_id_span) {
+  int current_graph_size = this->graph->GetNodeSet().size();
+  this->initial_graph_size = current_graph_size;
+  const std::unordered_map<std::string, std::pair<std::string, void *>>
+      column_header_to_type_span_map = {
+          {"pa_weight", {"double", (void *)this->pa_weight_vec.data()}},
+          {"fit_weight", {"double", (void *)this->fit_weight_vec.data()}},
+          {"num_authors_weight",
+           {"double", (void *)this->num_authors_weight_vec.data()}},
+          {"author_reputation_weight",
+           {"double", (void *)this->author_reputation_weight_vec.data()}},
+          {"out_degree", {"int", (void *)this->out_degree_vec.data()}},
+          {"alpha", {"double", (void *)this->alpha_vec.data()}},
+          {"fit_lag_duration",
+           {"int", (void *)this->fitness_lag_duration_vec.data()}},
+          {"fit_peak_value",
+           {"int", (void *)this->fitness_peak_value_vec.data()}},
+          {"fit_peak_duration",
+           {"int", (void *)this->fitness_peak_duration_vec.data()}},
+          {"num_authors",
+           {"int",
+            (void *)(this->num_authors_vec.data() + this->initial_graph_size)}},
+          {"author_id", {"int", (void *)(this->planted_author_id_vec.data())}}};
+  std::unordered_map<int, int> planted_nodes_line_number_map;
+  pcg32 &generator = Utils::GetThreadLocalPRNG();
+  int previous_graph_size = 0;
+  for (int current_relative_year = 0;
+       current_relative_year < this->num_cycles + 1; current_relative_year++) {
+    int num_new_nodes = std::ceil(current_graph_size * this->growth_rate);
+    if (this->planted_nodes_map.count(current_relative_year)) {
+      std::unordered_set<int> selected;
+      std::uniform_int_distribution<int> new_nodes_distribution{
+          previous_graph_size, current_graph_size - 1};
+      std::unordered_map<int, std::unordered_map<std::string, std::string>>
+          current_year_map = this->planted_nodes_map.at(current_relative_year);
+      for (auto const &[line_no, line_map] : current_year_map) {
+        int chosen_agent_index = new_nodes_distribution(generator);
+        while (selected.contains(chosen_agent_index)) {
+          chosen_agent_index = new_nodes_distribution(generator);
         }
-        if(current_line.size() == 0) {
-            break;
-        }
-        if(line_no != 0) {
-            int integer_year_diff = std::stoi(current_line[0]);
-            /* double probability = std::stod(current_line[1]); */
-            int count = std::stoi(current_line[1]);
-            if(integer_year_diff > 0) {
-                this->recency_counts_map[integer_year_diff] = count;
+        selected.insert(chosen_agent_index);
+        this->planted_nodes_line_number_map[chosen_agent_index -
+                                            this->initial_graph_size] = line_no;
+        for (auto const &[planted_feature_name, planted_feature_value] :
+             line_map) {
+          if (column_header_to_type_span_map.contains(planted_feature_name)) {
+            std::string current_variable_type =
+                column_header_to_type_span_map.at(planted_feature_name).first;
+            void *current_variable_span =
+                column_header_to_type_span_map.at(planted_feature_name).second;
+            if (current_variable_type == "double") {
+              ((double *)current_variable_span)[chosen_agent_index -
+                                                this->initial_graph_size] =
+                  std::stod(planted_feature_value);
+            } else if (current_variable_type == "int") {
+              ((int *)current_variable_span)[chosen_agent_index -
+                                             this->initial_graph_size] =
+                  std::stoi(planted_feature_value);
             }
+          }
         }
-        line_no ++;
+      }
     }
+    previous_graph_size = current_graph_size;
+    current_graph_size += num_new_nodes;
+  }
+  return this->planted_nodes_line_number_map;
 }
 
-std::unordered_map<int, int> ABM::BuildContinuousNodeMapping(Graph* graph) {
-    int next_node_id = 0;
-    std::unordered_map<int, int> continuous_node_mapping;
-    for(auto const& node : graph->GetNodeSet()) {
-        continuous_node_mapping[node] = next_node_id;
-        next_node_id ++;
+int ABM::GetMaxYear(Graph *graph) {
+  int max_year = -1;
+  bool is_first = true;
+  for (auto const &node : this->graph->GetNodeSet()) {
+    int current_node_year = this->graph->GetIntAttribute("year", node);
+    if (is_first) {
+      max_year = current_node_year;
+      is_first = false;
     }
-    return continuous_node_mapping;
-}
-
-std::unordered_map<int, int> ABM::ReverseMapping(std::unordered_map<int, int> mapping) {
-    std::unordered_map<int, int> reverse_mapping;
-    for(auto const& [key,val] : mapping) {
-        reverse_mapping[val] = key;
+    if (current_node_year > max_year) {
+      max_year = current_node_year;
     }
-    return reverse_mapping;
+  }
+  return max_year;
 }
 
-
-void ABM::FillInDegreeArr(Graph* graph, const std::unordered_map<int, int>& continuous_node_mapping, int* in_degree_arr) {
-    for(auto const& node: graph->GetNodeSet()) {
-        if (!continuous_node_mapping.contains(node)) {
-            std::cerr << std::to_string(node) << " not in continuous node mapping " << std::endl;
-        }
-        int continuous_id = continuous_node_mapping.at(node);
-        in_degree_arr[continuous_id] = graph->GetInDegree(node);
+int ABM::GetMaxNode(Graph *graph) {
+  int max_node = -1;
+  bool is_first = true;
+  for (auto const &node : this->graph->GetNodeSet()) {
+    if (is_first) {
+      max_node = node;
+      is_first = false;
     }
-}
-
-void ABM::FillAuthorReputationArr(Graph* graph, const std::unordered_map<int, int>& continuous_node_mapping, int* author_reputation_arr) {
-    graph->ComputeAuthorReputations();
-    for(auto const& node: graph->GetNodeSet()) {
-        if (!continuous_node_mapping.contains(node)) {
-            std::cerr << std::to_string(node) << " not in continuous node mapping " << std::endl;
-        }
-        int continuous_id = continuous_node_mapping.at(node);
-        author_reputation_arr[continuous_id] = graph->GetAuthorReputationForNode(node);
+    if (node > max_node) {
+      max_node = node;
     }
+  }
+  return max_node;
 }
 
-void ABM::InitializeFitness(Graph* graph) {
-    this->AssignPeakFitnessValues(graph, graph->GetNodeSet());
-    this->AssignFitnessLagDuration(graph, graph->GetNodeSet());
-    this->AssignFitnessPeakDuration(graph, graph->GetNodeSet());
+int ABM::GetFinalGraphSize(Graph *graph) {
+  int current_graph_size = this->graph->GetNodeSet().size();
+  for (int i = 0; i < this->num_cycles; i++) {
+    int num_new_nodes = std::ceil(current_graph_size * this->growth_rate);
+    current_graph_size += num_new_nodes;
+  }
+  return current_graph_size;
 }
 
-std::unordered_map<int, int> ABM::PlantNodes(Graph* graph, double* pa_weight_arr, double* fit_weight_arr, double* num_authors_weight_arr, double* author_reputation_weight_arr, int* out_degree_arr, double* alpha_arr, int* fitness_lag_duration_arr, int* fitness_peak_value_arr, int* fitness_peak_duration_arr, int* num_authors_arr, int* planted_author_id_arr) {
-    int current_graph_size = graph->GetNodeSet().size();
-    int initial_graph_size = current_graph_size;
-    const std::unordered_map<std::string, std::pair<std::string, void*>> column_header_to_type_arr_map = {
-        {"pa_weight", {"double", (void*)pa_weight_arr}},
-        {"fit_weight", {"double", (void*)fit_weight_arr}},
-        {"num_authors_weight", {"double", (void*)num_authors_weight_arr}},
-        {"author_reputation_weight", {"double", (void*)author_reputation_weight_arr}},
-        {"out_degree", {"int", (void*)out_degree_arr}},
-        {"alpha", {"double", (void*)alpha_arr}},
-        {"fit_lag_duration", {"int", (void*)fitness_lag_duration_arr}},
-        {"fit_peak_value", {"int", (void*)fitness_peak_value_arr}},
-        {"fit_peak_duration", {"int", (void*)fitness_peak_duration_arr}},
-        {"num_authors", {"int", (void*)(num_authors_arr + initial_graph_size)}},
-        {"author_id", {"int", (void*)(planted_author_id_arr)}}
-    };
-    std::unordered_map<int, int> planted_nodes_line_number_map;
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-    int previous_graph_size = 0;
-    for(int current_relative_year = 0; current_relative_year < this->num_cycles + 1; current_relative_year ++) {
-        int num_new_nodes = std::ceil(current_graph_size * this->growth_rate);
-        if (this->planted_nodes_map.count(current_relative_year)) {
-            std::unordered_set<int> selected;
-            std::uniform_int_distribution<int> new_nodes_distribution{previous_graph_size, current_graph_size - 1};
-            std::unordered_map<int, std::unordered_map<std::string, std::string>> current_year_map = this->planted_nodes_map.at(current_relative_year);
-            for(auto const& [line_no, line_map] : current_year_map) {
-                int chosen_agent_index = new_nodes_distribution(generator);
-                while(selected.contains(chosen_agent_index)) {
-                    chosen_agent_index = new_nodes_distribution(generator);
-                }
-                selected.insert(chosen_agent_index);
-                planted_nodes_line_number_map[chosen_agent_index - initial_graph_size] = line_no;
-                for(auto const& [planted_feature_name, planted_feature_value] : line_map) {
-                    if(column_header_to_type_arr_map.contains(planted_feature_name)) {
-                        std::string current_variable_type = column_header_to_type_arr_map.at(planted_feature_name).first;
-                        void* current_variable_arr = column_header_to_type_arr_map.at(planted_feature_name).second;
-                        if (current_variable_type == "double") {
-                            ((double*)current_variable_arr)[chosen_agent_index - initial_graph_size] = std::stod(planted_feature_value);
-                        } else if (current_variable_type == "int") {
-                            ((int*)current_variable_arr)[chosen_agent_index - initial_graph_size] = std::stoi(planted_feature_value);
-                        }
-                    }
-                }
-            }
-        }
-        previous_graph_size = current_graph_size;
-        current_graph_size += num_new_nodes;
+void ABM::UpdateGraphAttributesWeights(
+    Graph *graph, int next_node_id, std::span<double> pa_weight_span,
+    std::span<double> fit_weight_span,
+    std::span<double> num_authors_weight_span,
+    std::span<double> author_reputation_weight_span, int len) {
+  for (int i = 0; i < len; i++) {
+    int current_node_id = this->next_node_id + i;
+    this->graph->SetDoubleAttribute("pa_weight", current_node_id,
+                                    this->pa_weight_vec[i]);
+    this->graph->SetDoubleAttribute("fit_weight", current_node_id,
+                                    this->fit_weight_vec[i]);
+    this->graph->SetDoubleAttribute("num_authors_weight", current_node_id,
+                                    this->num_authors_weight_vec[i]);
+    this->graph->SetDoubleAttribute("author_reputation_weight", current_node_id,
+                                    this->author_reputation_weight_vec[i]);
+  }
+}
+
+void ABM::UpdateGraphAttributesNumAuthors(
+    Graph *graph, const std::unordered_map<int, int> &continuous_node_mapping,
+    std::span<int> num_authors_span) {
+  for (auto const &node_id : this->graph->GetNodeSet()) {
+    int continuous_id = this->continuous_node_mapping.at(node_id);
+    this->graph->SetIntAttribute("num_authors", node_id,
+                                 this->num_authors_vec[continuous_id]);
+  }
+}
+
+void ABM::UpdateGraphAttributesInitialAuthorReputations(
+    Graph *graph, const std::vector<int> &new_nodes_vec) {
+  for (size_t i = 0; i < new_nodes_vec.size(); i++) {
+    int current_node_id = new_nodes_vec.at(i);
+    int current_author_reputation =
+        this->graph->GetAuthorReputationForNode(current_node_id);
+    this->graph->SetIntAttribute("initial_author_reputation", current_node_id,
+                                 current_author_reputation);
+  }
+}
+
+void ABM::UpdateGraphAttributesFitnesses(
+    Graph *graph, const std::vector<int> &new_nodes_vec,
+    const std::unordered_map<int, int> &continuous_node_mapping,
+    std::span<int> fitness_lag_duration_span,
+    std::span<int> fitness_peak_value_span,
+    std::span<int> fitness_peak_duration_span, int initial_graph_size) {
+  for (size_t i = 0; i < new_nodes_vec.size(); i++) {
+    int current_node_id = new_nodes_vec.at(i);
+    int current_weight_span_index =
+        this->continuous_node_mapping.at(current_node_id) -
+        this->initial_graph_size;
+    this->graph->SetIntAttribute(
+        "fitness_lag_duration", current_node_id,
+        this->fitness_lag_duration_vec[current_weight_span_index]);
+    this->graph->SetIntAttribute(
+        "fitness_peak_value", current_node_id,
+        this->fitness_peak_value_vec[current_weight_span_index]);
+    this->graph->SetIntAttribute(
+        "fitness_peak_duration", current_node_id,
+        this->fitness_peak_duration_vec[current_weight_span_index]);
+  }
+}
+
+void ABM::UpdateGraphAttributesPlantedNodesLineNumbers(
+    Graph *graph, int next_node_id,
+    const std::unordered_map<int, int> &planted_nodes_line_number_map) {
+  for (auto const &[weight_span_index, line_no] :
+       this->planted_nodes_line_number_map) {
+    int current_node_id = this->next_node_id + weight_span_index;
+    this->graph->SetIntAttribute("planted_nodes_line_number", current_node_id,
+                                 line_no);
+  }
+}
+
+void ABM::UpdateGraphAttributesAlphas(Graph *graph, int next_node_id,
+                                      std::span<double> alpha_span, int len) {
+  for (int i = 0; i < len; i++) {
+    int current_node_id = this->next_node_id + i;
+    this->graph->SetDoubleAttribute("alpha", current_node_id,
+                                    this->alpha_vec[i]);
+  }
+}
+
+void ABM::UpdateGraphAttributesOutDegrees(Graph *graph, int next_node_id,
+                                          std::span<int> out_degree_span,
+                                          int len) {
+  for (int i = 0; i < len; i++) {
+    int current_node_id = this->next_node_id + i;
+    this->graph->SetIntAttribute("assigned_out_degree", current_node_id,
+                                 this->out_degree_vec[i]);
+  }
+}
+
+std::vector<int> ABM::GetGraphAttributesGeneratorNodes(Graph *graph,
+                                                       int new_node) const {
+  std::vector<int> generator_nodes;
+  std::string generator_node_string =
+      this->graph->GetStringAttribute("generator_node_string", new_node);
+  std::stringstream ss(generator_node_string);
+  std::string current_value;
+  while (std::getline(ss, current_value, ';')) {
+    generator_nodes.push_back(std::stoi(current_value));
+  }
+  return generator_nodes;
+}
+
+void ABM::UpdateGraphAttributesAuthors(Graph *graph, int new_node,
+                                       int author_id) {
+  this->graph->SetIntAttribute("author_id", new_node, author_id);
+  this->graph->UpdateAuthorPublicationMap(author_id, new_node);
+}
+
+void ABM::UpdateGraphAttributesGeneratorNodes(
+    Graph *graph, int new_node, const std::vector<int> &generator_nodes) {
+  std::string generator_node_string;
+  generator_node_string += std::to_string(generator_nodes.at(0));
+  for (size_t i = 1; i < generator_nodes.size(); i++) {
+    generator_node_string += ";";
+    generator_node_string += std::to_string(generator_nodes.at(i));
+  }
+  this->graph->SetStringAttribute("generator_node_string", new_node,
+                                  generator_node_string);
+}
+
+void ABM::FillSameYearSourceNodes(std::set<int> &same_year_source_nodes,
+                                  int current_year_new_nodes) {
+  size_t num_same_year_source_nodes =
+      (size_t)std::floor(current_year_new_nodes * this->same_year_citations);
+  pcg32 &generator = Utils::GetThreadLocalPRNG();
+  std::uniform_int_distribution<int> int_uniform_distribution(
+      0, current_year_new_nodes - 1);
+  while (same_year_source_nodes.size() != num_same_year_source_nodes) {
+    int current_source = int_uniform_distribution(generator);
+    if (same_year_source_nodes.count(current_source) == 0) {
+      same_year_source_nodes.insert(current_source);
     }
-    return planted_nodes_line_number_map;
+  }
 }
 
-void ABM::FillFitnessArr(Graph* graph, const std::unordered_map<int, int>& continuous_node_mapping, int current_year, int* fitness_arr) {
-    for(auto const& node : graph->GetNodeSet()) {
-        int fitness_peak_value = graph->GetIntAttribute("fitness_peak_value", node);
-        int fitness_lag_duration = graph->GetIntAttribute("fitness_lag_duration", node);
-        int fitness_peak_duration = graph->GetIntAttribute("fitness_peak_duration", node);
-        int published_year = graph->GetIntAttribute("year", node);
-        int continuous_index = continuous_node_mapping.at(node);
-        if (published_year + fitness_lag_duration > current_year) {
-            fitness_arr[continuous_index] = 1;
-        } else if (published_year + fitness_lag_duration + fitness_peak_duration >= current_year) {
-            fitness_arr[continuous_index] = fitness_peak_value;
+std::vector<int> ABM::GetCartelGeneratorNodes(Graph *graph, int author_id) {
+  std::vector<int> cartel_generator_nodes;
+  int cartel_id = this->graph->GetCartelID(author_id);
+  const std::set<int> node_set = this->graph->GetNodeSet();
+  for (auto const &cartel_author_id :
+       this->graph->GetCartelAuthors(cartel_id)) {
+    if (cartel_author_id == author_id) {
+      continue;
+    }
+    std::vector<int> cartel_author_publications =
+        this->graph->GetAuthorPublications(cartel_author_id);
+    for (const auto &cartel_author_publication : cartel_author_publications) {
+      if (!node_set.contains(cartel_author_publication)) {
+        continue;
+      }
+      cartel_generator_nodes.push_back(cartel_author_publication);
+    }
+    // cartel_generator_nodes.insert(cartel_generator_nodes.end(),
+    // cartel_author_publications.begin(), cartel_author_publications.end());
+  }
+  return cartel_generator_nodes;
+}
+
+std::vector<int> ABM::GetEligibleGeneratorNodes(
+    Graph *graph, int graph_size,
+    const std::unordered_map<int, int> &reverse_continuous_node_mapping,
+    std::span<int> in_degree_span, std::span<int> fitness_span,
+    int in_degree_threshold, int fitness_threshold, int start_year,
+    int current_year, int recency_threshold) {
+  std::vector<std::pair<double, int>> in_degree_eligible_generator_nodes;
+  std::vector<std::pair<double, int>> fitness_eligible_generator_nodes;
+  std::vector<int> eligible_generator_nodes;
+  if (current_year - this->start_year <= recency_threshold) {
+    for (int i = graph_size - 1; i >= 0; i--) {
+      int current_node_id = this->reverse_continuous_node_mapping.at(i);
+      if ((current_year - this->graph->GetIntAttribute(
+                              "year", current_node_id)) > recency_threshold) {
+      } else {
+        in_degree_eligible_generator_nodes.push_back(
+            {this->in_degree_vec[i], current_node_id});
+        if (this->graph->GetStringAttribute("type", current_node_id) ==
+            "seed") {
+          fitness_eligible_generator_nodes.push_back(
+              {this->fitness_value_max, current_node_id});
         } else {
-            double decayed_fitness_value = fitness_peak_value / pow(current_year - published_year - fitness_lag_duration - fitness_peak_duration + 1, this->fitness_decay_alpha);
-            fitness_arr[continuous_index] = decayed_fitness_value;
+          fitness_eligible_generator_nodes.push_back(
+              {this->fitness_vec[i], current_node_id});
         }
+      }
     }
-}
+  } else {
+    for (int i = graph_size - 1; i >= 0; i--) {
+      int current_node_id = this->reverse_continuous_node_mapping.at(i);
+      if ((current_year - this->graph->GetIntAttribute(
+                              "year", current_node_id)) > recency_threshold) {
+        break;
+      }
+      in_degree_eligible_generator_nodes.push_back(
+          {this->in_degree_vec[i], current_node_id});
+      fitness_eligible_generator_nodes.push_back(
+          {this->fitness_vec[i], current_node_id});
+    }
+  }
+  int in_degree_top_n_nodes_index =
+      (int)((in_degree_eligible_generator_nodes.size() - 1) *
+            ((double)in_degree_threshold / 100));
+  int fitness_top_n_nodes_index =
+      (int)((fitness_eligible_generator_nodes.size() - 1) *
+            ((double)fitness_threshold / 100));
 
-int ABM::GetMaxYear(Graph* graph) {
-    int max_year = -1;
-    bool is_first = true;
-    for(auto const& node : graph->GetNodeSet()) {
-        int current_node_year = graph->GetIntAttribute("year", node);
-        if (is_first) {
-            max_year = current_node_year;
-            is_first = false;
-        }
-        if (current_node_year > max_year) {
-            max_year = current_node_year;
-        }
-    }
-    return max_year;
-}
-
-int ABM::GetMaxNode(Graph* graph) {
-    int max_node = -1;
-    bool is_first = true;
-    for(auto const& node : graph->GetNodeSet()) {
-        if (is_first) {
-            max_node = node;
-            is_first = false;
-        }
-        if (node > max_node) {
-            max_node = node;
-        }
-    }
-    return max_node;
-}
-
-int ABM::GetFinalGraphSize(Graph* graph) {
-    int current_graph_size = graph->GetNodeSet().size();
-    for(int i = 0; i < this->num_cycles; i ++) {
-        int num_new_nodes = std::ceil(current_graph_size * this->growth_rate);
-        current_graph_size += num_new_nodes;
-    }
-    return current_graph_size;
-}
-
-void ABM::PopulateWeightArrs(double* pa_weight_arr, double* fit_weight_arr, double* num_authors_weight_arr, double* author_reputation_weight_arr, int len) {
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-    if(this->preferential_weight != -1 &&  this->fitness_weight != -1 && this->num_authors_weight != -1 && this->author_reputation_weight != -1) {
-        for(int i = 0; i < len; i ++) {
-            double pa_uniform = this->preferential_weight;
-            double fit_uniform = this->fitness_weight;
-            double num_authors_uniform = this->num_authors_weight;
-            double author_reputation_uniform = this->author_reputation_weight;
-            double sum = pa_uniform + fit_uniform + num_authors_uniform + author_reputation_uniform;
-            pa_weight_arr[i] = (double)pa_uniform / sum;
-            fit_weight_arr[i] = (double)fit_uniform / sum;
-            num_authors_weight_arr[i] = (double)num_authors_uniform / sum;
-            author_reputation_weight_arr[i] = (double)author_reputation_uniform / sum;
-        }
-    } else {
-        for(int i = 0; i < len; i ++) {
-            std::uniform_real_distribution<double> weights_uniform_distribution{0, 1};
-            double pa_uniform = weights_uniform_distribution(generator);
-            double fit_uniform = weights_uniform_distribution(generator);
-            double num_authors_uniform = weights_uniform_distribution(generator);
-            double author_reputation_uniform = weights_uniform_distribution(generator);
-            double sum = pa_uniform + fit_uniform + num_authors_uniform + author_reputation_uniform;
-            pa_weight_arr[i] = (double)pa_uniform / sum;
-            fit_weight_arr[i] = (double)fit_uniform / sum;
-            num_authors_weight_arr[i] = (double)num_authors_uniform / sum;
-            author_reputation_weight_arr[i] = (double)author_reputation_uniform / sum;
-        }
-    }
-}
-
-void ABM::PopulateNumAuthorsArr(Graph* graph, int* num_authors_arr, int len) {
-    for(int i = 0; i < len; i ++) {
-        num_authors_arr[i] = graph->GetNextNumAuthors();
-    }
-}
-
-void ABM::PopulateFitnessArrs(int* fitness_lag_duration_arr, int* fitness_peak_value_arr, int* fitness_peak_duration_arr, int len) {
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-    for(int i = 0; i < len; i ++) {
-        fitness_lag_duration_arr[i] = this->fitness_lag_duration_uniform_distribution(generator);
-        double fitness_uniform = this->fitness_value_uniform_distribution(generator);
-        double adjusted_alpha = this->fitness_alpha + 1;
-        double base_left = (pow(this->fitness_value_max, adjusted_alpha) - pow(this->fitness_value_min, adjusted_alpha)) * fitness_uniform;
-        double base_right = pow(this->fitness_value_min, adjusted_alpha);
-        double exponent = 1.0/adjusted_alpha;
-        int fitness_power = pow(base_left + base_right ,exponent);
-        fitness_peak_value_arr[i] = fitness_power;
-        fitness_peak_duration_arr[i] = this->fitness_peak_duration_uniform_distribution(generator);
-    }
-}
-
-void ABM::PopulateAlphaArr(double* alpha_arr, int len) {
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-
-    if(!this->use_alpha) {
-        for(int i = 0; i < len; i ++) {
-            alpha_arr[i] = -1;
-        }
-    } else if(this->alpha == -1) {
-        for(int i = 0; i < len; i ++) {
-            double alpha_uniform = this->alpha_uniform_distribution(generator);
-            alpha_uniform = std::round(alpha_uniform * 1000.0) / 1000.0;
-            alpha_arr[i] = alpha_uniform;
-        }
-    } else if(this->minimum_alpha > 0) {
-        for(int i = 0; i < len; i ++) {
-            std::uniform_real_distribution<double> minimum_alpha_uniform_distribution{minimum_alpha, 1};
-            double alpha_uniform = minimum_alpha_uniform_distribution(generator);
-            alpha_arr[i] = alpha_uniform;
-        }
-    } else {
-        for(int i = 0; i < len; i ++) {
-            alpha_arr[i] = this->alpha;
-        }
-    }
-}
-
-void ABM::PopulateOutDegreeArr(int* out_degree_arr, int len) {
-    std::uniform_int_distribution<int> outdegree_index_uniform_distribution{0, (int)(this->out_degree_bag_vec.size() - 1)};
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-    for(int i = 0; i < len; i ++) {
-        int index_uniform = outdegree_index_uniform_distribution(generator);
-        out_degree_arr[i] = this->out_degree_bag_vec[index_uniform];
-    }
-}
-
-void ABM::UpdateGraphAttributesWeights(Graph* graph, int next_node_id, double* pa_weight_arr, double* fit_weight_arr, double* num_authors_weight_arr, double* author_reputation_weight_arr, int len) {
-    for(int i = 0; i < len; i ++) {
-        int current_node_id = next_node_id + i;
-        graph->SetDoubleAttribute("pa_weight", current_node_id, pa_weight_arr[i]);
-        graph->SetDoubleAttribute("fit_weight", current_node_id, fit_weight_arr[i]);
-        graph->SetDoubleAttribute("num_authors_weight", current_node_id, num_authors_weight_arr[i]);
-        graph->SetDoubleAttribute("author_reputation_weight", current_node_id, author_reputation_weight_arr[i]);
-    }
-}
-
-void ABM::UpdateGraphAttributesNumAuthors(Graph* graph, const std::unordered_map<int, int>& continuous_node_mapping, int* num_authors_arr) {
-    for(auto const& node_id : graph->GetNodeSet()) {
-        int continuous_id = continuous_node_mapping.at(node_id);
-        graph->SetIntAttribute("num_authors", node_id, num_authors_arr[continuous_id]);
-    }
-}
-
-void ABM::UpdateGraphAttributesInitialAuthorReputations(Graph* graph, const std::vector<int>& new_nodes_vec) {
-    for(size_t i = 0; i < new_nodes_vec.size(); i ++) {
-        int current_node_id = new_nodes_vec.at(i);
-        int current_author_reputation = graph->GetAuthorReputationForNode(current_node_id);
-        graph->SetIntAttribute("initial_author_reputation", current_node_id, current_author_reputation);
-    }
-}
-
-void ABM::UpdateGraphAttributesFitnesses(Graph* graph, const std::vector<int>& new_nodes_vec, const std::unordered_map<int,int>& continuous_node_mapping, int* fitness_lag_duration_arr, int* fitness_peak_value_arr, int* fitness_peak_duration_arr, int initial_graph_size) {
-    for(size_t i = 0; i < new_nodes_vec.size(); i ++) {
-        int current_node_id = new_nodes_vec.at(i);
-        int current_weight_arr_index = continuous_node_mapping.at(current_node_id) - initial_graph_size;
-        graph->SetIntAttribute("fitness_lag_duration", current_node_id, fitness_lag_duration_arr[current_weight_arr_index]);
-        graph->SetIntAttribute("fitness_peak_value", current_node_id, fitness_peak_value_arr[current_weight_arr_index]);
-        graph->SetIntAttribute("fitness_peak_duration", current_node_id, fitness_peak_duration_arr[current_weight_arr_index]);
-    }
-}
-
-void ABM::UpdateGraphAttributesPlantedNodesLineNumbers(Graph* graph, int next_node_id, const std::unordered_map<int, int>& planted_nodes_line_number_map) {
-    for(auto const& [weight_arr_index, line_no] : planted_nodes_line_number_map) {
-        int current_node_id = next_node_id + weight_arr_index;
-        graph->SetIntAttribute("planted_nodes_line_number", current_node_id, line_no);
-    }
-}
-
-void ABM::UpdateGraphAttributesAlphas(Graph* graph, int next_node_id, double* alpha_arr, int len) {
-    for(int i = 0; i < len; i ++) {
-        int current_node_id = next_node_id + i;
-        graph->SetDoubleAttribute("alpha", current_node_id, alpha_arr[i]);
-    }
-}
-
-void ABM::UpdateGraphAttributesOutDegrees(Graph* graph, int next_node_id, int* out_degree_arr, int len) {
-    for(int i = 0; i < len; i ++) {
-        int current_node_id = next_node_id + i;
-        graph->SetIntAttribute("assigned_out_degree", current_node_id, out_degree_arr[i]);
-    }
-}
-
-std::vector<int> ABM::GetGraphAttributesGeneratorNodes(Graph* graph, int new_node) const {
-    std::vector<int> generator_nodes;
-    std::string generator_node_string = graph->GetStringAttribute("generator_node_string", new_node);
-    std::stringstream ss(generator_node_string);
-    std::string current_value;
-    while(std::getline(ss, current_value, ';')) {
-        generator_nodes.push_back(std::stoi(current_value));
-    }
-    return generator_nodes;
-}
-
-void ABM::UpdateGraphAttributesAuthors(Graph* graph, int new_node, int author_id) {
-        graph->SetIntAttribute("author_id", new_node, author_id);
-        graph->UpdateAuthorPublicationMap(author_id, new_node);
-}
-
-void ABM::UpdateGraphAttributesGeneratorNodes(Graph* graph, int new_node, const std::vector<int>& generator_nodes) {
-    std::string generator_node_string;
-    generator_node_string += std::to_string(generator_nodes.at(0));
-    for(size_t i = 1; i < generator_nodes.size(); i ++) {
-        generator_node_string += ";";
-        generator_node_string += std::to_string(generator_nodes.at(i));
-    }
-    graph->SetStringAttribute("generator_node_string", new_node, generator_node_string);
-}
-
-void ABM::CalculateTanhScores(std::unordered_map<int, double>& cached_results, int* src_arr, double* dst_arr, int len) {
-    double sum = 0;
-    #pragma omp parallel for reduction(+:sum)
-    for(int i = 0; i < len; i ++) {
-        double current_dst = -1;
-        if (src_arr[i] < 10000) {
-            current_dst = cached_results[src_arr[i]];
-        } else {
-            current_dst = this->peak_constant * std::tanh((pow(src_arr[i], 3)/this->delay_constant)*(1/this->peak_constant));
-        }
-        dst_arr[i] = current_dst;
-        sum += current_dst;
-    }
-    #pragma omp parallel for
-    for(int i = 0; i < len; i ++) {
-        dst_arr[i] /= sum;
-    }
-}
-
-void ABM::CalculateExpScores(std::unordered_map<int, double>& cached_results, int* src_arr, double* dst_arr, int len) {
-    double sum = 0;
-    #pragma omp parallel for reduction(+:sum)
-    for(int i = 0; i < len; i ++) {
-        double current_dst = std::max(pow(src_arr[i], this->gamma), 1.0) + 1;
-        dst_arr[i] = current_dst;
-        sum += current_dst;
-    }
-    #pragma omp parallel for
-    for(int i = 0; i < len; i ++) {
-        dst_arr[i] /= sum;
-    }
-}
-
-void ABM::FillSameYearSourceNodes(std::set<int>& same_year_source_nodes, int current_year_new_nodes) {
-    size_t num_same_year_source_nodes = (size_t)std::floor(current_year_new_nodes * this->same_year_citations);
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-    std::uniform_int_distribution<int> int_uniform_distribution(0, current_year_new_nodes - 1);
-    while(same_year_source_nodes.size() != num_same_year_source_nodes) {
-        int current_source = int_uniform_distribution(generator);
-        if (same_year_source_nodes.count(current_source) == 0) {
-            same_year_source_nodes.insert(current_source);
-        }
-    }
-}
-
-int ABM::MakeSameYearCitations(const std::set<int>& same_year_source_nodes, int num_new_nodes, const std::unordered_map<int, int>& reverse_continuous_node_mapping, int* citations, int current_graph_size) {
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-    std::uniform_int_distribution<int> int_uniform_distribution(0, num_new_nodes - 1);
-    int current_citation = int_uniform_distribution(generator);
-    while(same_year_source_nodes.contains(current_citation)) {
-        current_citation = int_uniform_distribution(generator);
-    }
-    citations[0] = reverse_continuous_node_mapping.at(current_graph_size + current_citation);
-    return 1;
-}
-
-int ABM::MakeUniformRandomCitationsFromGraph(Graph* graph, const std::unordered_map<int, int>& reverse_continuous_node_mapping, std::vector<int>& generator_nodes, int* citations, int num_cited_so_far, int num_citations) {
-    if (num_citations <= 0) {
-        return 0;
-    }
-    int actual_num_cited = num_citations;
-    std::set<int> selected;
-    for(int i = 0; i < num_cited_so_far; i ++) {
-        selected.insert(citations[i]);
-    }
-    for(size_t i = 0; i < generator_nodes.size(); i ++) {
-        selected.insert(generator_nodes.at(i));
-    }
-    if ((int)graph->GetNodeSet().size() - (int)selected.size() <= num_citations) {
-        actual_num_cited = (int)graph->GetNodeSet().size() - (int)selected.size();
-        int current_citation_index = 0;
-        for(auto const& node_id : graph->GetNodeSet()) {
-            if (!selected.contains(node_id)) {
-                citations[num_cited_so_far + current_citation_index] = node_id;
-                selected.insert(node_id);
-                current_citation_index ++;
-            }
-        }
-    } else {
-        pcg_extras::seed_seq_from<std::random_device> rand_dev;
-        pcg32 generator(rand_dev);
-        std::uniform_int_distribution<int> int_uniform_distribution(0, (int)(graph->GetNodeSet().size() - 1));
-        int current_citation_index = 0;
-        while(current_citation_index < actual_num_cited) {
-            int current_citation = int_uniform_distribution(generator);
-            int current_cited_node = reverse_continuous_node_mapping.at(current_citation);
-            if (current_cited_node < 0) {
-                std::cerr << "randomly selected negative node: " << std::to_string(current_cited_node) << " from continous index: " << std::to_string(current_citation) << std::endl;
-            }
-            if (!selected.contains(current_cited_node)) {
-                citations[num_cited_so_far + current_citation_index] = current_cited_node;
-                selected.insert(current_cited_node);
-                current_citation_index ++;
-            }
-        }
-    }
-    return actual_num_cited;
-}
-
-int ABM::MakeUniformRandomCitations(Graph* graph, const std::unordered_map<int, int>& continuous_node_mapping, int current_year, const std::vector<int>& candidate_nodes, int* citations, int current_graph_size, int num_citations) {
-    if (num_citations <= 0) {
-        return 0;
-    }
-    if (candidate_nodes.size() <= 0) {
-        return 0;
-    }
-
-    int actual_num_cited = num_citations;
-    if (candidate_nodes.size() <= (size_t)num_citations) {
-        actual_num_cited = candidate_nodes.size();
-        for(int i = 0; i < actual_num_cited; i ++) {
-            citations[i] = candidate_nodes.at(i);
-        }
-    } else {
-        pcg_extras::seed_seq_from<std::random_device> rand_dev;
-        pcg32 generator(rand_dev);
-        std::uniform_int_distribution<int> int_uniform_distribution(0, (int)(candidate_nodes.size() - 1));
-        std::set<int> selected;
-        int current_citation_index = 0;
-        while((int)selected.size() != actual_num_cited) {
-            int current_selected_index = int_uniform_distribution(generator);
-            int current_node = candidate_nodes.at(current_selected_index);
-            if (!selected.contains(current_node)) {
-                citations[current_citation_index] = current_node;
-                selected.insert(current_node);
-                current_citation_index ++;
-            }
-        }
-    }
-    return actual_num_cited;
-}
-
-
-int ABM::MakeNullCartelCitations(Graph* graph, const std::vector<int>& generator_nodes, int author_id, const std::unordered_map<int, int>& continuous_node_mapping, const std::unordered_map<int, std::vector<int>>& n_hop_map, int* citations, int num_cartel_citations) {
-    // assume at this point that we are a cartel author
-    std::set<int> generator_nodes_set(generator_nodes.begin(), generator_nodes.end());
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-    std::vector<int> in_neighborhood_cartel_nodes;
-    int cartel_id = graph->GetCartelID(author_id);
-    std::set<int> current_cartel_authors = graph->GetCartelAuthors(cartel_id);
-    for(auto const& [distance, node_vec] : n_hop_map) {
-        std::vector<int> current_node_vec(node_vec);
-        std::ranges::shuffle(current_node_vec, generator);
-        for(auto const& node_id : current_node_vec) {
-            int node_author_id = graph->GetIntAttribute("author_id", node_id);
-            int node_cartel_id = graph->GetCartelID(node_author_id);
-            if (cartel_id == node_cartel_id && author_id != node_author_id && !generator_nodes_set.contains(node_id)) {
-                if(current_cartel_authors.contains(node_author_id)) {
-                    in_neighborhood_cartel_nodes.push_back(node_id);
-                    current_cartel_authors.erase(node_author_id);
-                }
-            }
-        }
-    }
-    int actual_num_cited = 0;
-    std::ranges::shuffle(in_neighborhood_cartel_nodes, generator);
-    for(size_t i = 0; i < in_neighborhood_cartel_nodes.size(); i ++) {
-        if (actual_num_cited == num_cartel_citations) {
-            break;
-        }
-        citations[actual_num_cited] = in_neighborhood_cartel_nodes.at(i);
-        actual_num_cited += 1;
-    }
-    std::set<int> in_neighborhood_cartel_nodes_set(in_neighborhood_cartel_nodes.begin(), in_neighborhood_cartel_nodes.end());
-    if(in_neighborhood_cartel_nodes.size() != in_neighborhood_cartel_nodes_set.size()) {
-        std::cerr << "error: duplicate nodes inside in_neighborhood_cartel_nodes" << std::endl;
-    }
-    if (actual_num_cited < num_cartel_citations) {
-        std::vector<int> cartel_nodes;
-        // for(auto const& cartel_author_id : graph->GetCartelAuthors(cartel_id)) {
-        for(auto const& cartel_author_id : current_cartel_authors) {
-            if (cartel_author_id == author_id) {
-                continue;
-            }
-            std::vector<int> cartel_author_publications = graph->GetAuthorPublications(cartel_author_id);
-            std::vector<int> already_published_cartel_author_publications;
-            for(size_t i = 0; i < cartel_author_publications.size(); i ++) {
-                if (graph->GetNodeSet().contains(cartel_author_publications.at(i)) && !in_neighborhood_cartel_nodes_set.contains(cartel_author_publications.at(i)) && !generator_nodes_set.contains(cartel_author_publications.at(i))) {
-                    already_published_cartel_author_publications.push_back(cartel_author_publications.at(i));
-                }
-            }
-            // assume that a cartel author has publications already
-            if (already_published_cartel_author_publications.size() > 0) {
-                std::ranges::shuffle(already_published_cartel_author_publications, generator);
-                // cartel_nodes.push_back(already_published_cartel_author_publications.at(0));
-                if (actual_num_cited == num_cartel_citations) {
-                    break;
-                }
-                if(in_neighborhood_cartel_nodes_set.contains(already_published_cartel_author_publications.at(0))) {
-                    std::cerr << "error: in_neighborhood_cartel_nodes_set already contains outside neighborhood citation" << std::endl;
-                }
-                citations[actual_num_cited] = already_published_cartel_author_publications.at(0);
-                actual_num_cited += 1;
-            }
-        }
-        // std::ranges::shuffle(cartel_nodes, generator);
-        // for(size_t i = 0; i < cartel_nodes.size(); i ++) {
-        //     if (actual_num_cited == num_cartel_citations) {
-        //         break;
-        //     }
-        //     citations[actual_num_cited] = cartel_nodes.at(i);
-        //     actual_num_cited += 1;
-        // }
-    }
-
-    return actual_num_cited;
-}
-
-int ABM::MakeScoredCartelCitations(Graph* graph, const std::vector<int>& generator_nodes, int author_id, const std::unordered_map<int, int>& continuous_node_mapping, const std::unordered_map<int, std::vector<int>>& n_hop_map, int* citations, int num_cartel_citations, int current_year, const std::unordered_map<int, double>& binned_recency_probabilities, double* pa_arr, double* fit_arr, double* na_arr, double* ar_arr, double pa_weight, double fit_weight, double num_authors_weight, double author_reputation_weight, int current_graph_size) {
-    // first handle within neighborhood
-    std::set<int> generator_nodes_set(generator_nodes.begin(), generator_nodes.end());
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-    std::vector<int> in_neighborhood_cartel_nodes;
-    int cartel_id = graph->GetCartelID(author_id);
-    std::set<int> current_cartel_authors = graph->GetCartelAuthors(cartel_id);
-    for(auto const& [distance, node_vec] : n_hop_map) {
-        std::vector<int> current_node_vec(node_vec);
-        std::ranges::shuffle(current_node_vec, generator);
-        for(auto const& node_id : current_node_vec) {
-            int node_author_id = graph->GetIntAttribute("author_id", node_id);
-            int node_cartel_id = graph->GetCartelID(node_author_id);
-            if (cartel_id == node_cartel_id && node_author_id != author_id && !generator_nodes_set.contains(node_id)) {
-                if(current_cartel_authors.contains(node_author_id)) {
-                    in_neighborhood_cartel_nodes.push_back(node_id);
-                    current_cartel_authors.erase(node_author_id);
-                }
-            }
-        }
-    }
-    std::set<int> in_neighborhood_cartel_nodes_set(in_neighborhood_cartel_nodes.begin(), in_neighborhood_cartel_nodes.end());
-    std::unordered_map<int, std::vector<int>> binned_neighborhood = this->BinNeighborhood(graph, current_year, in_neighborhood_cartel_nodes);
-    std::unordered_map<int, int> outdegree_per_bin_map = this->BinOutdegrees(binned_neighborhood, num_cartel_citations, binned_recency_probabilities);
-    int num_locally_cited = 0;
-    for(int bin_index = 0; bin_index < this->num_bins - 1; bin_index ++) { // if there's only 1 bin then this is always false
-        num_locally_cited += this->MakeCitations(graph, continuous_node_mapping, current_year, binned_neighborhood[bin_index], citations + num_locally_cited, pa_arr, fit_arr, na_arr, ar_arr, pa_weight, fit_weight, num_authors_weight, author_reputation_weight, current_graph_size, outdegree_per_bin_map[bin_index]);
-    }
-    num_locally_cited += this->MakeUniformRandomCitations(graph, continuous_node_mapping, current_year, binned_neighborhood[this->num_bins - 1], citations + num_locally_cited, current_graph_size, outdegree_per_bin_map[this->num_bins - 1]);
-    // next handle outside neighborhood
-    if (num_locally_cited < num_cartel_citations) {
-        int remaining_num_cartel_citations = num_cartel_citations - num_locally_cited;
-        std::vector<int> outside_neighborhood_cartel_nodes;
-        for(auto const& cartel_author_id : current_cartel_authors) {
-            if (cartel_author_id == author_id) {
-                continue;
-            }
-            std::vector<int> cartel_author_publications = graph->GetAuthorPublications(cartel_author_id);
-            std::vector<int> already_published_cartel_author_publications;
-            for(size_t i = 0; i < cartel_author_publications.size(); i ++) {
-                if (graph->GetNodeSet().contains(cartel_author_publications.at(i)) && !in_neighborhood_cartel_nodes_set.contains(cartel_author_publications.at(i)) && !generator_nodes_set.contains(cartel_author_publications.at(i))) {
-                    already_published_cartel_author_publications.push_back(cartel_author_publications.at(i));
-                }
-            }
-            // assume that a cartel author has publications already
-            if (already_published_cartel_author_publications.size() > 0) {
-                std::ranges::shuffle(already_published_cartel_author_publications, generator);
-                outside_neighborhood_cartel_nodes.push_back(already_published_cartel_author_publications.at(0));
-            }
-        }
-        std::unordered_map<int, std::vector<int>> binned_neighborhood = this->BinNeighborhood(graph, current_year, outside_neighborhood_cartel_nodes);
-        std::unordered_map<int, int> outdegree_per_bin_map = this->BinOutdegrees(binned_neighborhood, remaining_num_cartel_citations, binned_recency_probabilities);
-        for(int bin_index = 0; bin_index < this->num_bins - 1; bin_index ++) { // if there's only 1 bin then this is always false
-            num_locally_cited += this->MakeCitations(graph, continuous_node_mapping, current_year, binned_neighborhood[bin_index], citations + num_locally_cited, pa_arr, fit_arr, na_arr, ar_arr, pa_weight, fit_weight, num_authors_weight, author_reputation_weight, current_graph_size, outdegree_per_bin_map[bin_index]);
-        }
-        num_locally_cited += this->MakeUniformRandomCitations(graph, continuous_node_mapping, current_year, binned_neighborhood[this->num_bins - 1], citations + num_locally_cited, current_graph_size, outdegree_per_bin_map[this->num_bins - 1]);
-    }
-    return num_locally_cited;
-}
-
-int ABM::MakeCartelCitations(Graph* graph, const std::vector<int>& generator_nodes, int author_id, const std::unordered_map<int, int>& continuous_node_mapping, const std::unordered_map<int, std::vector<int>>& n_hop_map, int* citations, int num_cartel_citations, int current_year, const std::unordered_map<int, double>& binned_recency_probabilities, double* pa_arr, double* fit_arr, double* na_arr, double* ar_arr, double pa_weight, double fit_weight, double num_authors_weight, double author_reputation_weight, int current_graph_size) {
-    if (num_cartel_citations == 0) {
-        return 0;
-    }
-    if (this->null_cartel) {
-        return this->MakeNullCartelCitations(graph, generator_nodes, author_id, continuous_node_mapping, n_hop_map, citations, num_cartel_citations);
-    }
-    return this->MakeScoredCartelCitations(graph, generator_nodes, author_id, continuous_node_mapping, n_hop_map, citations, num_cartel_citations, current_year, binned_recency_probabilities, pa_arr, fit_arr, na_arr, ar_arr, pa_weight, fit_weight, num_authors_weight, author_reputation_weight, current_graph_size);
-}
-
-int ABM::MakeCitations(Graph* graph, const std::unordered_map<int, int>& continuous_node_mapping, int current_year, const std::vector<int>& candidate_nodes, int* citations, double* pa_arr, double* fit_arr, double* na_arr, double* ar_arr, double pa_weight, double fit_weight, double num_authors_weight, double author_reputation_weight, int current_graph_size, int num_citations) {
-    if (num_citations <= 0) {
-        return 0;
-    }
-    if (candidate_nodes.size() <= 0) {
-        return 0;
-    }
-    int actual_num_cited = num_citations;
-    if (candidate_nodes.size() < (size_t)num_citations) {
-        actual_num_cited = candidate_nodes.size();
-    }
-    std::vector<std::pair<double, int>> element_index_vec;
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-
-    /* begin weighted random sampling results */
-    Eigen::MatrixXd current_scores(candidate_nodes.size(), 4);
-    Eigen::Vector4d current_weights(pa_weight, fit_weight, num_authors_weight, author_reputation_weight);
-    double pa_sum = 0.0;
-    double fit_sum = 0.0;
-    double na_sum = 0.0;
-    double ar_sum = 0.0;
-    std::vector<double> raw_pa_arr;
-    std::vector<double> raw_fit_arr;
-    std::vector<double> raw_na_arr;
-    std::vector<double> raw_ar_arr;
-    raw_pa_arr.reserve(candidate_nodes.size());
-    raw_fit_arr.reserve(candidate_nodes.size());
-    raw_na_arr.reserve(candidate_nodes.size());
-    raw_ar_arr.reserve(candidate_nodes.size());
-    for(size_t i = 0; i < candidate_nodes.size(); i ++) {
-        int continuous_node_id = continuous_node_mapping.at(candidate_nodes.at(i));
-        double current_pa = pa_arr[continuous_node_id];
-        double current_fit = fit_arr[continuous_node_id];
-        double current_na = na_arr[continuous_node_id];
-        double current_ar = ar_arr[continuous_node_id];
-        pa_sum += current_pa;
-        fit_sum += current_fit;
-        na_sum += current_na;
-        ar_sum += current_ar;
-        raw_pa_arr.push_back(current_pa);
-        raw_fit_arr.push_back(current_fit);
-        raw_na_arr.push_back(current_na);
-        raw_ar_arr.push_back(current_ar);
-    }
-    for(size_t i = 0; i < candidate_nodes.size(); i ++) {
-        current_scores(i, 0) = raw_pa_arr[i] / pa_sum;
-        current_scores(i, 1) = raw_fit_arr[i] / fit_sum;
-        current_scores(i, 2) = raw_na_arr[i] / na_sum;
-        current_scores(i, 3) = raw_ar_arr[i] / ar_sum;
-    }
-    Eigen::MatrixXd current_weighted_scores = current_scores * current_weights;
-    // double u = log(current_pa) + log(pa_weight);
-    // double v = log(current_rec) + log(rec_weight);
-    // double w = log(current_fit) + log(fit_weight);
-    // double max_value = std::max(u, std::max(v, w));
-    // current_scores[i] = max_value + log(exp(u - max_value) + exp(v - max_value) + exp(w - max_value));
-    // Eigen::ArrayXd current_weighted_scores(candidate_nodes.size());
-    // current_scores = current_scores.array().log();
-    // current_weights = current_weights.array().log();
-    // for(size_t i = 0; i < candidate_nodes.size(); i ++) {
-        // double u = log(current_scores(i, 0)) + log(current_weights(0));
-        // double v = log(current_scores(i, 1)) + log(current_weights(1));
-        // double u = current_scores(i, 0) + current_weights(0);
-        // double v = current_scores(i, 1) + current_weights(1);
-        // double max_value = std::max(u, v);
-        // current_weighted_scores(i) = max_value + log(exp(u - max_value) + exp(v - max_value));
-    // }
-
-    auto current_wrs_uniform = [&] () {return wrs_uniform_distribution(generator);};
-    Eigen::ArrayXd current_bases = Eigen::ArrayXd::NullaryExpr(candidate_nodes.size(), current_wrs_uniform);
-    // Eigen::ArrayXd weighted_random_sampling_results = current_bases.pow(1.0 / current_weighted_scores.array());
-    Eigen::ArrayXd weighted_random_sampling_results = current_bases.log() / current_weighted_scores.array();
-    /* end weighted random sampling results */
-
-    for(size_t i = 0; i < candidate_nodes.size(); i ++) {
-        element_index_vec.push_back({weighted_random_sampling_results(i), candidate_nodes.at(i)});
-    }
-    std::ranges::shuffle(element_index_vec, generator);
-    /* std::sort(element_index_vec.begin(), element_index_vec.end(), [](auto& left, auto& right){ */
-    std::partial_sort(element_index_vec.begin(), element_index_vec.begin() + actual_num_cited, element_index_vec.end(), [](auto& left, auto& right){
+  std::nth_element(
+      in_degree_eligible_generator_nodes.begin(),
+      in_degree_eligible_generator_nodes.begin() + in_degree_top_n_nodes_index,
+      in_degree_eligible_generator_nodes.end(), [](auto &left, auto &right) {
         return left.first > right.first; // read
-    });
-    for (int i = 0; i < actual_num_cited; i ++) {
-        citations[i] = element_index_vec[i].second;
-    }
-    return actual_num_cited;
-}
-
-int ABM::GetNumCartelCitations(Graph* graph, int author_id, const std::unordered_map<int, std::vector<int>>& n_hop_map, int total_num_citations_neighborhood) {
-    std::set<int> cartel_authors_in_neighborhood;
-    int current_cartel_id = graph->GetCartelID(author_id);
-    if (current_cartel_id > 0) {
-        for(auto const& [distance, node_vec] : n_hop_map) {
-            for (size_t i = 0; i < node_vec.size() ; i ++) {
-                int node_author_id = graph->GetIntAttribute("author_id", node_vec.at(i));
-                int node_cartel_id = graph->GetCartelID(node_author_id);
-                if (current_cartel_id == node_cartel_id) {
-                    cartel_authors_in_neighborhood.insert(node_author_id);
-                }
-            }
-        }
-    }
-    if ((size_t)total_num_citations_neighborhood > cartel_authors_in_neighborhood.size()) {
-        return cartel_authors_in_neighborhood.size();
-    }
-    return total_num_citations_neighborhood;
-}
-
-std::vector<int> ABM::GetCartelGeneratorNodes(Graph* graph, int author_id) {
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-    std::vector<int> cartel_generator_nodes;
-    int cartel_id = graph->GetCartelID(author_id);
-    const std::set<int> node_set = graph->GetNodeSet();
-    for(auto const& cartel_author_id : graph->GetCartelAuthors(cartel_id)) {
-        if (cartel_author_id == author_id) {
-            continue;
-        }
-        std::vector<int> cartel_author_publications = graph->GetAuthorPublications(cartel_author_id);
-        for (const auto& cartel_author_publication : cartel_author_publications) {
-            if (!node_set.contains(cartel_author_publication)) {
-                continue;
-            }
-            cartel_generator_nodes.push_back(cartel_author_publication);
-        }
-        // cartel_generator_nodes.insert(cartel_generator_nodes.end(), cartel_author_publications.begin(), cartel_author_publications.end());
-    }
-    return cartel_generator_nodes;
-}
-
-std::vector<int> ABM::GetEligibleGeneratorNodes(Graph* graph, int graph_size, const std::unordered_map<int, int>& reverse_continuous_node_mapping, int* in_degree_arr, int* fitness_arr, int in_degree_threshold, int fitness_threshold, int start_year, int current_year, int recency_threshold) {
-    std::vector<std::pair<double, int>> in_degree_eligible_generator_nodes;
-    std::vector<std::pair<double, int>> fitness_eligible_generator_nodes;
-    std::vector<int> eligible_generator_nodes;
-    if (current_year - start_year <= recency_threshold) {
-        for(int i = graph_size - 1; i >= 0; i --) {
-            int current_node_id = reverse_continuous_node_mapping.at(i);
-            if ((current_year - graph->GetIntAttribute("year", current_node_id)) > recency_threshold) {
-            } else {
-                in_degree_eligible_generator_nodes.push_back({in_degree_arr[i], current_node_id});
-                if (graph->GetStringAttribute("type", current_node_id) == "seed") {
-                    fitness_eligible_generator_nodes.push_back({this->fitness_value_max, current_node_id});
-                } else {
-                    fitness_eligible_generator_nodes.push_back({fitness_arr[i], current_node_id});
-                }
-            }
-        }
-    } else {
-        for(int i = graph_size - 1; i >= 0; i --) {
-            int current_node_id = reverse_continuous_node_mapping.at(i);
-            if ((current_year - graph->GetIntAttribute("year", current_node_id)) > recency_threshold) {
-                break;
-            }
-            in_degree_eligible_generator_nodes.push_back({in_degree_arr[i], current_node_id});
-            fitness_eligible_generator_nodes.push_back({fitness_arr[i], current_node_id});
-        }
-    }
-    int in_degree_top_n_nodes_index = (int)((in_degree_eligible_generator_nodes.size() - 1) * ((double)in_degree_threshold / 100));
-    int fitness_top_n_nodes_index = (int)((fitness_eligible_generator_nodes.size() - 1) * ((double)fitness_threshold / 100));
-
-    std::nth_element(in_degree_eligible_generator_nodes.begin(), in_degree_eligible_generator_nodes.begin() + in_degree_top_n_nodes_index, in_degree_eligible_generator_nodes.end(), [](auto& left, auto& right){
+      });
+  std::nth_element(
+      fitness_eligible_generator_nodes.begin(),
+      fitness_eligible_generator_nodes.begin() + fitness_top_n_nodes_index,
+      fitness_eligible_generator_nodes.end(), [](auto &left, auto &right) {
         return left.first > right.first; // read
-    });
-    std::nth_element(fitness_eligible_generator_nodes.begin(), fitness_eligible_generator_nodes.begin() + fitness_top_n_nodes_index, fitness_eligible_generator_nodes.end(), [](auto& left, auto& right){
-        return left.first > right.first; // read
-    });
-    std::set<int> eligible_in_degree_node_ids;
-    std::set<int> eligible_fitness_node_ids;
-    for (size_t i = 0; i < in_degree_eligible_generator_nodes.size(); i ++) {
-        if (in_degree_eligible_generator_nodes.at(i).first >= in_degree_eligible_generator_nodes.at(in_degree_top_n_nodes_index).first) {
-            eligible_in_degree_node_ids.insert(in_degree_eligible_generator_nodes.at(i).second);
-        }
-        if (fitness_eligible_generator_nodes.at(i).first >= fitness_eligible_generator_nodes.at(fitness_top_n_nodes_index).first) {
-            eligible_fitness_node_ids.insert(fitness_eligible_generator_nodes.at(i).second);
-        }
+      });
+  std::set<int> eligible_in_degree_node_ids;
+  std::set<int> eligible_fitness_node_ids;
+  for (size_t i = 0; i < in_degree_eligible_generator_nodes.size(); i++) {
+    if (in_degree_eligible_generator_nodes.at(i).first >=
+        in_degree_eligible_generator_nodes.at(in_degree_top_n_nodes_index)
+            .first) {
+      eligible_in_degree_node_ids.insert(
+          in_degree_eligible_generator_nodes.at(i).second);
     }
-    std::set_intersection(eligible_in_degree_node_ids.begin(), eligible_in_degree_node_ids.end(), eligible_fitness_node_ids.begin(), eligible_fitness_node_ids.end(), std::back_inserter(eligible_generator_nodes));
-    return eligible_generator_nodes;
+    if (fitness_eligible_generator_nodes.at(i).first >=
+        fitness_eligible_generator_nodes.at(fitness_top_n_nodes_index).first) {
+      eligible_fitness_node_ids.insert(
+          fitness_eligible_generator_nodes.at(i).second);
+    }
+  }
+  std::set_intersection(
+      eligible_in_degree_node_ids.begin(), eligible_in_degree_node_ids.end(),
+      eligible_fitness_node_ids.begin(), eligible_fitness_node_ids.end(),
+      std::back_inserter(eligible_generator_nodes));
+  return eligible_generator_nodes;
 }
 
-std::vector<int> ABM::GetGeneratorNodesFromSet(std::vector<int>& eligible_generator_nodes) {
-    std::vector<int> generator_nodes;
-    std::uniform_int_distribution<int> generator_uniform_distribution{0, (int)(eligible_generator_nodes.size() - 1)};
-    int num_generator_nodes = 1;
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-    for(int i = 0; i < num_generator_nodes; i ++) {
-        int continuous_generator_node = generator_uniform_distribution(generator);
-        int generator_node = eligible_generator_nodes.at(continuous_generator_node);
-        generator_nodes.push_back(generator_node);
-    }
-    return generator_nodes;
+std::vector<int>
+ABM::GetGeneratorNodesFromSet(std::vector<int> &eligible_generator_nodes) {
+  std::vector<int> generator_nodes;
+  std::uniform_int_distribution<int> generator_uniform_distribution{
+      0, (int)(eligible_generator_nodes.size() - 1)};
+  int num_generator_nodes = 1;
+  pcg32 &generator = Utils::GetThreadLocalPRNG();
+  for (int i = 0; i < num_generator_nodes; i++) {
+    int continuous_generator_node = generator_uniform_distribution(generator);
+    int generator_node = eligible_generator_nodes.at(continuous_generator_node);
+    generator_nodes.push_back(generator_node);
+  }
+  return generator_nodes;
 }
 
-std::vector<int> ABM::GetGeneratorNodes(Graph* graph, const std::unordered_map<int, int>& reverse_continuous_node_mapping) {
-    std::vector<int> generator_nodes;
-    std::uniform_int_distribution<int> generator_uniform_distribution{0, (int)(graph->GetNodeSet().size() - 1)};
-    int num_generator_nodes = 1;
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-    for(int i = 0; i < num_generator_nodes; i ++) {
-        int continuous_generator_node = generator_uniform_distribution(generator);
-        int generator_node = reverse_continuous_node_mapping.at(continuous_generator_node);
-        generator_nodes.push_back(generator_node);
-    }
-    return generator_nodes;
-}
-
-std::unordered_map<int, int> ABM::BinOutdegrees(const std::unordered_map<int, std::vector<int>>& binned_neighborhood, int total_outdegree, std::unordered_map<int, double> binned_recency_probabilities) {
-    // initially let's say total_outdegree (requested) = 100
-    // [0.5, 0.2, 0.2, 0.1] recency probability that's the same for all agents
-    // split 100 into proportions
-    // [50, 20, 20, 10]
-    // first check sum(E) == 100
-    // [(6,7,9), (10,9,2), (19,1), (5 * )] actual neighborhood with node ids
-    // [50 - 3, 20 - 3, 20 - 3, 10 - 1] -> "unfulfilled quota"
-    // [47, 17, 17, 9] -> "unfulfilled quota"
-    // look left and right to see if any bins are available
-    // end up citing [3, 3, 2, x] things from each bin
-    std::unordered_map<int, int> target_outdegree_per_bin_map;
-    int remaining_outdegree = total_outdegree;
-    for(int bin_index = 0; bin_index < this->num_bins; bin_index ++) {
-        if (remaining_outdegree == 0) {
-            break;
-        }
-        double bin_probability = binned_recency_probabilities[bin_index];
-        int current_bin_outdegree = std::round(total_outdegree * bin_probability);
-        current_bin_outdegree = std::min(current_bin_outdegree, remaining_outdegree);
-        target_outdegree_per_bin_map[bin_index] = current_bin_outdegree;
-        remaining_outdegree -= current_bin_outdegree;
-    }
-    std::uniform_int_distribution<int> year_distribution{1, 5};
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-    while(remaining_outdegree > 0) {
-        int chosen_year = year_distribution(generator);
-        int current_bin_index = this->GetBinIndex(chosen_year);
-        target_outdegree_per_bin_map[current_bin_index] += 1;
-        remaining_outdegree --;
-    }
-    for(int bin_index = 0; bin_index < this->num_bins; bin_index ++) {
-        int current_uncited_num_nodes = target_outdegree_per_bin_map[bin_index] - binned_neighborhood.at(bin_index).size();
-        if (current_uncited_num_nodes > 0) {
-            for(int sweep_index = bin_index - 1; sweep_index >= 0 && current_uncited_num_nodes > 0; sweep_index --) {
-                if (target_outdegree_per_bin_map[sweep_index] < (int)binned_neighborhood.at(sweep_index).size()) {
-                    int current_citable = std::min(current_uncited_num_nodes, (int)binned_neighborhood.at(sweep_index).size() - target_outdegree_per_bin_map[sweep_index]);
-                    current_uncited_num_nodes -= current_citable;
-                    target_outdegree_per_bin_map[sweep_index] += current_citable;
-                    target_outdegree_per_bin_map[bin_index] -= current_citable;
-                }
-            }
-            for(int sweep_index = bin_index + 1; sweep_index < this->num_bins && current_uncited_num_nodes > 0; sweep_index ++) {
-                if (target_outdegree_per_bin_map[sweep_index] < (int)binned_neighborhood.at(sweep_index).size()) {
-                    int current_citable = std::min(current_uncited_num_nodes, (int)binned_neighborhood.at(sweep_index).size() - target_outdegree_per_bin_map[sweep_index]);
-                    current_uncited_num_nodes -= current_citable;
-                    target_outdegree_per_bin_map[sweep_index] += current_citable;
-                    target_outdegree_per_bin_map[bin_index] -= current_citable;
-                }
-            }
-        }
-    }
-    return target_outdegree_per_bin_map;
-}
-
-int ABM::GetBinIndex(int year_diff) {
-    /* 5,10,25 with explicit but ignored 1*/
-    /* [1, 5) */
-    /* [5, 10) */
-    /* [10, 25) */
-    /* [25, inf) */
-    for (int i = 0; i < this->num_bins - 1; i ++) {
-        if (this->bin_boundaries.at(i) <= year_diff && year_diff < this->bin_boundaries.at(i + 1)) {
-            return i;
-        }
-    }
-    return this->bin_boundaries.size() - 1;
-}
-
-int ABM::GetBinIndex(Graph* graph, int current_node, int current_year) {
-    int current_diff = current_year - graph->GetIntAttribute("year", current_node);
-    return this->GetBinIndex(current_diff);
-}
-
-std::unordered_map<int, std::vector<int>> ABM::BinNeighborhood(Graph* graph, int current_year, std::vector<int> n_hop_list) {
-    std::unordered_map<int, std::vector<int>> binned_neighborhood;
-    for(int i = 0; i < this->num_bins; i ++) {
-        binned_neighborhood[i] = {};
-    }
-    for(size_t i = 0; i < n_hop_list.size(); i ++) {
-        int current_node = n_hop_list[i];
-        int current_bin = GetBinIndex(graph, current_node, current_year);
-        binned_neighborhood[current_bin].push_back(current_node);
-    }
-    return binned_neighborhood;
-}
-std::unordered_map<int, std::vector<int>> ABM::GetNeighborhoodMap(Graph* graph, int current_year, const std::vector<int>& generator_nodes, int num_hops) {
-    if (this->use_alpha) {
-        // create distance 1 and distance 2 neighborhoods
-        return this->GetOneAndTwoDistanceNeighborhoods(graph, current_year, generator_nodes, num_hops);
-    } else {
-        return this->GetNHopNeighborhood(graph, current_year, generator_nodes, num_hops);
-    }
-}
-
-std::unordered_map<int, std::vector<int>> ABM::GetOneAndTwoDistanceNeighborhoods(Graph* graph, int current_year, const std::vector<int>& generator_nodes, int num_hops) {
-    std::unordered_map<int, std::vector<int>> n_hop_map;
-    if (this->neighborhood_sample == -1) {
-        std::set<int> visited;
-        for(size_t i = 0; i < generator_nodes.size(); i ++) {
-            int generator_node = generator_nodes.at(i);
-            std::queue<std::pair<int, int>> to_visit;
-            to_visit.push({generator_node, 0});
-            visited.insert(generator_node);
-            while(!to_visit.empty()) {
-                std::pair<int, int> current_pair = to_visit.front();
-                to_visit.pop();
-                int current_node = current_pair.first;
-                int current_distance = current_pair.second;
-                if (current_distance > 0) {
-                    n_hop_map[current_distance].push_back(current_node);
-                }
-                if (current_distance < num_hops) {
-                    if(graph->GetOutDegree(current_node) > 0) {
-                        for(auto const& outgoing_neighbor : graph->GetForwardAdjMap().at(current_node)) {
-                            if(!visited.contains(outgoing_neighbor)) {
-                                visited.insert(outgoing_neighbor);
-                                to_visit.push({outgoing_neighbor, current_distance + 1});
-                            }
-                        }
-                    }
-                    if(graph->GetInDegree(current_node) > 0) {
-                        for(auto const& incoming_neighbor : graph->GetBackwardAdjMap().at(current_node)) {
-                            if(!visited.contains(incoming_neighbor)) {
-                                visited.insert(incoming_neighbor);
-                                to_visit.push({incoming_neighbor, current_distance + 1});
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        // NOTE: only supports randomly sampling from up to 2-hop
-        n_hop_map[1].reserve(this->neighborhood_sample);
-        n_hop_map[2].reserve(this->neighborhood_sample);
-        size_t max_neighborhood_size = this->neighborhood_sample;
-        std::set<int> visited;
-        pcg_extras::seed_seq_from<std::random_device> rand_dev;
-        pcg32 generator(rand_dev);
-        for(size_t i = 0; i < generator_nodes.size(); i ++) {
-            // get the 1-hop first
-            int generator_node = generator_nodes.at(i);
-            visited.insert(generator_node);
-            std::vector<int> current_one_hop_neighborhood;
-            if(graph->GetOutDegree(generator_node) > 0) {
-                for(auto const& outgoing_neighbor : graph->GetForwardAdjMap().at(generator_node)) {
-                    if (!visited.contains(outgoing_neighbor)) {
-                        current_one_hop_neighborhood.push_back(outgoing_neighbor);
-                        visited.insert(outgoing_neighbor);
-                    }
-                }
-            }
-            if(graph->GetInDegree(generator_node) > 0) {
-                for(auto const& incoming_neighbor : graph->GetBackwardAdjMap().at(generator_node)) {
-                    if (!visited.contains(incoming_neighbor)) {
-                        current_one_hop_neighborhood.push_back(incoming_neighbor);
-                        visited.insert(incoming_neighbor);
-                    }
-                }
-            }
-            // pick random nodes to get to 2-hop
-            if (current_one_hop_neighborhood.size() > max_neighborhood_size) {
-                std::vector<int> sampled_one_hop_neighborhood;
-                std::sample(current_one_hop_neighborhood.begin(), current_one_hop_neighborhood.end(), std::back_inserter(sampled_one_hop_neighborhood), max_neighborhood_size, generator);
-                current_one_hop_neighborhood = sampled_one_hop_neighborhood;
-            }
-            // until here should be fast
-            std::copy(current_one_hop_neighborhood.begin(), current_one_hop_neighborhood.end(), std::back_inserter(n_hop_map[1]));
-            std::shuffle(current_one_hop_neighborhood.begin(), current_one_hop_neighborhood.end(), generator);
-            for(size_t j = 0; j < current_one_hop_neighborhood.size(); j ++) {
-                int current_two_hop_size = 0;
-                if (graph->GetOutDegree(current_one_hop_neighborhood[j]) > 0) {
-                    current_two_hop_size += graph->GetForwardAdjMap().at(current_one_hop_neighborhood[j]).size();
-                }
-                if (graph->GetInDegree(current_one_hop_neighborhood[j]) > 0) {
-                    current_two_hop_size += graph->GetBackwardAdjMap().at(current_one_hop_neighborhood[j]).size();
-                }
-                // worst case for one node we might only grab the outgoing edges
-                if (n_hop_map[2].size() + current_two_hop_size < max_neighborhood_size) {
-                    if (graph->GetOutDegree(current_one_hop_neighborhood[j]) > 0) {
-                        for(auto const& outgoing_neighbor : graph->GetForwardAdjMap().at(current_one_hop_neighborhood[j])) {
-                            if (!visited.contains(outgoing_neighbor)) {
-                                visited.insert(outgoing_neighbor);
-                                n_hop_map[2].push_back(outgoing_neighbor);
-                            }
-                        }
-                    }
-                    if (graph->GetInDegree(current_one_hop_neighborhood[j]) > 0) {
-                        for(auto const& incoming_neighbor : graph->GetBackwardAdjMap().at(current_one_hop_neighborhood[j])) {
-                            if (!visited.contains(incoming_neighbor)) {
-                                visited.insert(incoming_neighbor);
-                                n_hop_map[2].push_back(incoming_neighbor);
-                            }
-                        }
-                    }
-                } else {
-                    std::vector<int> to_be_sampled_neighborhood;
-                    if (graph->GetOutDegree(current_one_hop_neighborhood[j]) > 0) {
-                        for(auto const& outgoing_neighbor : graph->GetForwardAdjMap().at(current_one_hop_neighborhood[j])) {
-                            if (!visited.contains(outgoing_neighbor)) {
-                                to_be_sampled_neighborhood.push_back(outgoing_neighbor);
-                            }
-                        }
-                    }
-                    if (graph->GetInDegree(current_one_hop_neighborhood[j]) > 0) {
-                        for(auto const& incoming_neighbor : graph->GetBackwardAdjMap().at(current_one_hop_neighborhood[j])) {
-                            if (!visited.contains(incoming_neighbor)) {
-                                to_be_sampled_neighborhood.push_back(incoming_neighbor);
-                            }
-                        }
-                    }
-                    // std::sample(to_be_sampled_neighborhood.begin(), to_be_sampled_neighborhood.end(), std::back_inserter(n_hop_map[2]), max_neighborhood_size - n_hop_map[2].size(), generator);
-                    // if (n_hop_map[2].size() == max_neighborhood_size) {
-                    //     return n_hop_map;
-                    // }
-                    std::vector<int> sampled_neighborhood;
-                    std::sample(to_be_sampled_neighborhood.begin(), to_be_sampled_neighborhood.end(), std::back_inserter(sampled_neighborhood), max_neighborhood_size - n_hop_map[2].size(), generator);
-                    for(size_t i = 0; i < sampled_neighborhood.size(); i ++) {
-                        if (!visited.contains(sampled_neighborhood.at(i))) {
-                            visited.insert(sampled_neighborhood.at(i));
-                            n_hop_map[2].push_back(sampled_neighborhood.at(i));
-                        }
-                    }
-                    if (n_hop_map[2].size() == max_neighborhood_size) {
-                        return n_hop_map;
-                    }
-                }
-            }
-        }
-    }
-    return n_hop_map;
-}
-
-std::unordered_map<int, std::vector<int>> ABM::GetNHopNeighborhood(Graph* graph, int current_year, const std::vector<int>& generator_nodes, int num_hops) {
-    std::unordered_map<int, std::vector<int>> n_hop_map;
-    std::vector<int> n_hop_neighborhood;
-    if (this->neighborhood_sample == -1) {
-        std::set<int> visited;
-        for(size_t i = 0; i < generator_nodes.size(); i ++) {
-            int generator_node = generator_nodes.at(i);
-            std::queue<std::pair<int, int>> to_visit;
-            to_visit.push({generator_node, 0});
-            visited.insert(generator_node);
-            while(!to_visit.empty()) {
-                std::pair<int, int> current_pair = to_visit.front();
-                to_visit.pop();
-                int current_node = current_pair.first;
-                int current_distance = current_pair.second;
-                if (current_distance > 0) {
-                    n_hop_neighborhood.push_back(current_node);
-                }
-                if (current_distance < num_hops) {
-                    if(graph->GetOutDegree(current_node) > 0) {
-                        for(auto const& outgoing_neighbor : graph->GetForwardAdjMap().at(current_node)) {
-                            if(!visited.contains(outgoing_neighbor)) {
-                                visited.insert(outgoing_neighbor);
-                                to_visit.push({outgoing_neighbor, current_distance + 1});
-                            }
-                        }
-                    }
-                    if(graph->GetInDegree(current_node) > 0) {
-                        for(auto const& incoming_neighbor : graph->GetBackwardAdjMap().at(current_node)) {
-                            if(!visited.contains(incoming_neighbor)) {
-                                visited.insert(incoming_neighbor);
-                                to_visit.push({incoming_neighbor, current_distance + 1});
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        // NOTE: only supports randomly sampling from up to 2-hop
-        n_hop_neighborhood.reserve(this->neighborhood_sample);
-        size_t max_neighborhood_size = this->neighborhood_sample;
-        std::set<int> visited;
-        pcg_extras::seed_seq_from<std::random_device> rand_dev;
-        pcg32 generator(rand_dev);
-        for(size_t i = 0; i < generator_nodes.size(); i ++) {
-            // get the 1-hop first
-            int generator_node = generator_nodes.at(i);
-            visited.insert(generator_node);
-            std::vector<int> current_one_hop_neighborhood;
-            if(graph->GetOutDegree(generator_node) > 0) {
-                for(auto const& outgoing_neighbor : graph->GetForwardAdjMap().at(generator_node)) {
-                    if (!visited.contains(outgoing_neighbor)) {
-                        current_one_hop_neighborhood.push_back(outgoing_neighbor);
-                        visited.insert(outgoing_neighbor);
-                    }
-                }
-            }
-            if(graph->GetInDegree(generator_node) > 0) {
-                for(auto const& incoming_neighbor : graph->GetBackwardAdjMap().at(generator_node)) {
-                    if (!visited.contains(incoming_neighbor)) {
-                        current_one_hop_neighborhood.push_back(incoming_neighbor);
-                        visited.insert(incoming_neighbor);
-                    }
-                }
-            }
-            // pick random nodes to get to 2-hop
-            if (current_one_hop_neighborhood.size() > max_neighborhood_size) {
-                std::vector<int> sampled_one_hop_neighborhood;
-                std::sample(current_one_hop_neighborhood.begin(), current_one_hop_neighborhood.end(), std::back_inserter(sampled_one_hop_neighborhood), max_neighborhood_size, generator);
-                current_one_hop_neighborhood = sampled_one_hop_neighborhood;
-            }
-            // until here should be fast
-            std::copy(current_one_hop_neighborhood.begin(), current_one_hop_neighborhood.end(), std::back_inserter(n_hop_neighborhood));
-            std::shuffle(current_one_hop_neighborhood.begin(), current_one_hop_neighborhood.end(), generator);
-            for(size_t j = 0; j < current_one_hop_neighborhood.size(); j ++) {
-                int current_two_hop_size = 0;
-                if (graph->GetOutDegree(current_one_hop_neighborhood[j]) > 0) {
-                    current_two_hop_size += graph->GetForwardAdjMap().at(current_one_hop_neighborhood[j]).size();
-                }
-                if (graph->GetInDegree(current_one_hop_neighborhood[j]) > 0) {
-                    current_two_hop_size += graph->GetBackwardAdjMap().at(current_one_hop_neighborhood[j]).size();
-                }
-                // worst case for one node we might only grab the outgoing edges
-                if (n_hop_neighborhood.size() + current_two_hop_size < max_neighborhood_size) {
-                    if (graph->GetOutDegree(current_one_hop_neighborhood[j]) > 0) {
-                        for(auto const& outgoing_neighbor : graph->GetForwardAdjMap().at(current_one_hop_neighborhood[j])) {
-                            if (!visited.contains(outgoing_neighbor)) {
-                                visited.insert(outgoing_neighbor);
-                                n_hop_neighborhood.push_back(outgoing_neighbor);
-                            }
-                        }
-                    }
-                    if (graph->GetInDegree(current_one_hop_neighborhood[j]) > 0) {
-                        for(auto const& incoming_neighbor : graph->GetBackwardAdjMap().at(current_one_hop_neighborhood[j])) {
-                            if (!visited.contains(incoming_neighbor)) {
-                                visited.insert(incoming_neighbor);
-                                n_hop_neighborhood.push_back(incoming_neighbor);
-                            }
-                        }
-                    }
-                } else {
-                    std::vector<int> to_be_sampled_neighborhood;
-                    if (graph->GetOutDegree(current_one_hop_neighborhood[j]) > 0) {
-                        for(auto const& outgoing_neighbor : graph->GetForwardAdjMap().at(current_one_hop_neighborhood[j])) {
-                            if (!visited.contains(outgoing_neighbor)) {
-                                to_be_sampled_neighborhood.push_back(outgoing_neighbor);
-                            }
-                        }
-                    }
-                    if (graph->GetInDegree(current_one_hop_neighborhood[j]) > 0) {
-                        for(auto const& incoming_neighbor : graph->GetBackwardAdjMap().at(current_one_hop_neighborhood[j])) {
-                            if (!visited.contains(incoming_neighbor)) {
-                                to_be_sampled_neighborhood.push_back(incoming_neighbor);
-                            }
-                        }
-                    }
-                    // std::sample(to_be_sampled_neighborhood.begin(), to_be_sampled_neighborhood.end(), std::back_inserter(n_hop_neighborhood), max_neighborhood_size - n_hop_neighborhood.size(), generator);
-                    // if (n_hop_neighborhood.size() == max_neighborhood_size) {
-                    //     n_hop_map[1] = n_hop_neighborhood;
-                    //     return n_hop_map;
-                    // }
-                    std::vector<int> sampled_neighborhood;
-                    // std::sample(to_be_sampled_neighborhood.begin(), to_be_sampled_neighborhood.end(), std::back_inserter(n_hop_neighborhood), max_neighborhood_size - n_hop_neighborhood.size(), generator);
-                    std::sample(to_be_sampled_neighborhood.begin(), to_be_sampled_neighborhood.end(), std::back_inserter(sampled_neighborhood), max_neighborhood_size - n_hop_neighborhood.size(), generator);
-                    for(size_t i = 0; i < sampled_neighborhood.size(); i ++) {
-                        if (!visited.contains(sampled_neighborhood.at(i))) {
-                            visited.insert(sampled_neighborhood.at(i));
-                            n_hop_neighborhood.push_back(sampled_neighborhood.at(i));
-                        }
-                    }
-                    if (n_hop_neighborhood.size() == max_neighborhood_size) {
-                        n_hop_map[1] = n_hop_neighborhood;
-                        return n_hop_map;
-                    }
-                }
-            }
-        }
-    }
-    n_hop_map[1] = n_hop_neighborhood;
-    return n_hop_map;
-}
-
-void ABM::LogTime(int current_year, std::string label, int time_elapsed) {
-    if (this->log_level == 1) {
-        this->timing_file_handle << std::to_string(current_year) << "," << label << "," << std::to_string(time_elapsed) << "\n";
-        std::flush(this->timing_file_handle);
-    }
-}
-
-void ABM::LogTime(int current_year, std::string label) {
-    if (this->log_level == 1) {
-        std::chrono::time_point<std::chrono::steady_clock> current_time = std::chrono::steady_clock::now();
-        auto milliseconds_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - this->prev_time);
-        this->timing_map[current_year].push_back({label, milliseconds_elapsed.count()});
-        this->prev_time = current_time;
-        this->timing_file_handle << std::to_string(current_year) << "," << label << "," << std::to_string(milliseconds_elapsed.count()) << "\n";
-        std::flush(this->timing_file_handle);
-    }
-}
-
-
-std::chrono::time_point<std::chrono::steady_clock> ABM::LocalLogTime(std::vector<std::pair<std::string, int>>& local_parallel_stage_time_vec, std::chrono::time_point<std::chrono::steady_clock> local_prev_time, std::string label) {
-    std::chrono::time_point<std::chrono::steady_clock> local_current_time = std::chrono::steady_clock::now();
-    auto milliseconds_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(local_current_time - local_prev_time);
-    local_parallel_stage_time_vec.push_back({label, milliseconds_elapsed.count()});
-    return local_current_time;
-}
-
-void ABM::WriteTimingFile(int start_year, int end_year) {
-    for(int i = start_year; i < end_year; i ++) {
-        for(size_t j = 0; j < this->timing_map[i].size(); j ++) {
-            this->timing_file_handle << std::to_string(i) << "," << (this->timing_map[i][j]).first << "," << std::to_string((this->timing_map[i][j]).second) << "\n";
-        }
-    }
-}
-
-std::unordered_map<int, int> ABM::GetNumCitationsPerNeighborhood(double alpha, int total_num_citations_neighborhood, const std::unordered_map<int, std::vector<int>>& n_hop_map) {
-    std::unordered_map<int, int> num_citations_per_neighborhood;
-    if (this->use_alpha) {
-        num_citations_per_neighborhood[1] = std::min((int)(total_num_citations_neighborhood * alpha), (int)n_hop_map.at(1).size());
-        num_citations_per_neighborhood[2] = std::min(total_num_citations_neighborhood - num_citations_per_neighborhood[1], (int)n_hop_map.at(2).size());
-    } else {
-        num_citations_per_neighborhood[1] = std::min(total_num_citations_neighborhood, (int)n_hop_map.at(1).size());
-    }
-    return num_citations_per_neighborhood;
-}
-
-
-void ABM::InitializeBinBoundaries() {
-    std::string bin_boundary_string = this->recency_bins;
-    std::stringstream ss(bin_boundary_string);
-    std::string current_value;
-    int element_no = 0;
-    while(std::getline(ss, current_value, ',')) {
-        int current_bin_value = std::stoi(current_value);
-        if (current_bin_value != -1) {
-            this->bin_boundaries.push_back(current_bin_value);
-        }
-        element_no ++;
-    }
-    this->num_bins = element_no;
-}
-
-void ABM::InitilaizeClonalCartelAgentStruct() {
-    char delimiter = Utils::GetDelimiter(this->clonal_cartel_agent_file);
-    std::unordered_map<int, std::string> index_to_header_map = Utils::GetIndexToHeaderMap(delimiter, this->clonal_cartel_agent_file);
-    std::unordered_map<std::string, int> header_to_index_map = Utils::GetHeaderToIndexMap(delimiter, this->clonal_cartel_agent_file);
-    std::ifstream clonal_cartel_agent_stream(this->clonal_cartel_agent_file);
-    std::string line;
-    int line_no = 1;
-    while(std::getline(clonal_cartel_agent_stream, line)) {
-        std::stringstream ss(line);
-        std::string current_value;
-        std::vector<std::string> current_line;
-        while(std::getline(ss, current_value, delimiter)) {
-            current_line.push_back(current_value);
-        }
-        if(current_line.size() == 0) {
-            break;
-        }
-        if (line_no > 1) {
-            for(size_t i = 0; i < current_line.size(); i ++) {
-                std::string current_header = index_to_header_map[i];
-                if (current_header == "num_authors") {
-                    this->clonal_cartel_agent.num_authors = std::stoi(current_line[i]);
-                }
-                if (current_header == "pa_weight") {
-                    this->clonal_cartel_agent.pa_weight = std::stod(current_line[i]);
-                }
-                if (current_header == "fit_weight") {
-                    this->clonal_cartel_agent.fit_weight = std::stod(current_line[i]);
-                }
-                if (current_header == "num_authors_weight") {
-                    this->clonal_cartel_agent.num_authors_weight = std::stod(current_line[i]);
-                }
-                if (current_header == "author_reputation_weight") {
-                    this->clonal_cartel_agent.author_reputation_weight = std::stod(current_line[i]);
-                }
-                if (current_header == "out_degree") {
-                    this->clonal_cartel_agent.out_degree = std::stoi(current_line[i]);
-                }
-                if (current_header == "alpha") {
-                    this->clonal_cartel_agent.alpha = std::stod(current_line[i]);
-                }
-                if (current_header == "fitness_lag_duration") {
-                    this->clonal_cartel_agent.fitness_lag_duration = std::stoi(current_line[i]);
-                }
-                if (current_header == "fitness_peak_value") {
-                    this->clonal_cartel_agent.fitness_peak_value = std::stoi(current_line[i]);
-                }
-                if (current_header == "fitness_peak_duration") {
-                    this->clonal_cartel_agent.fitness_peak_duration = std::stoi(current_line[i]);
-                }
-            }
-        }
-        line_no += 1;
-    }
+std::vector<int> ABM::GetGeneratorNodes(
+    Graph *graph,
+    const std::unordered_map<int, int> &reverse_continuous_node_mapping) {
+  std::vector<int> generator_nodes;
+  std::uniform_int_distribution<int> generator_uniform_distribution{
+      0, (int)(this->graph->GetNodeSet().size() - 1)};
+  int num_generator_nodes = 1;
+  pcg32 &generator = Utils::GetThreadLocalPRNG();
+  for (int i = 0; i < num_generator_nodes; i++) {
+    int continuous_generator_node = generator_uniform_distribution(generator);
+    int generator_node =
+        this->reverse_continuous_node_mapping.at(continuous_generator_node);
+    generator_nodes.push_back(generator_node);
+  }
+  return generator_nodes;
 }
 
 bool ABM::ValidateBinBoundaries() {
-    this->WriteToLogFile(std::to_string(this->bin_boundaries.size()) + " bins have been created", Log::info);
-    if (this->bin_boundaries.size() == 0) {
-        this->WriteToLogFile("At least one bin is required", Log::error);
-        return false;
-    }
-    if (this->bin_boundaries.at(0) != 1) {
-        this->WriteToLogFile("The first bin must start with year 1", Log::error);
-        return false;
-    }
-    std::string recency_bin_string;
-    for(size_t i = 0; i < this->bin_boundaries.size() - 1; i ++) {
-        recency_bin_string += ("[" + std::to_string(bin_boundaries.at(i)) + "," + std::to_string(this->bin_boundaries.at(i + 1)) + "), ");
-    }
-    recency_bin_string += ("[" + std::to_string(this->bin_boundaries.at(this->bin_boundaries.size() - 1)) + ",infinity)");
-    this->WriteToLogFile("Here are the bins: " + recency_bin_string, Log::info);
-    return true;
+  this->logger.WriteToLogFile(std::to_string(this->bin_boundaries.size()) +
+                                  " bins have been created",
+                              Log::info);
+  if (this->bin_boundaries.size() == 0) {
+    this->logger.WriteToLogFile("At least one bin is required", Log::error);
+    return false;
+  }
+  if (this->bin_boundaries.at(0) != 1) {
+    this->logger.WriteToLogFile("The first bin must start with year 1",
+                                Log::error);
+    return false;
+  }
+  std::string recency_bin_string;
+  for (size_t i = 0; i < this->bin_boundaries.size() - 1; i++) {
+    recency_bin_string +=
+        ("[" + std::to_string(bin_boundaries.at(i)) + "," +
+         std::to_string(this->bin_boundaries.at(i + 1)) + "), ");
+  }
+  recency_bin_string += ("[" +
+                         std::to_string(this->bin_boundaries.at(
+                             this->bin_boundaries.size() - 1)) +
+                         ",infinity)");
+  this->logger.WriteToLogFile(
+      std::format("Here are the bins: {}", recency_bin_string), Log::info);
+  return true;
 }
 
 bool ABM::ValidateArguments() {
-    if (!this->ValidateArgument("Environment", "edgelist", this->edgelist, "")) {
-        return false;
-    }
-    if (!this->ValidateArgument("Environment", "nodelist", this->nodelist, "")) {
-        return false;
-    }
-    if (!this->ValidateArgument("Environment", "growth_rate", this->growth_rate, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Environment", "num_cycles", this->num_cycles, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Environment", "out_degree_bag", this->out_degree_bag, "")) {
-        return false;
-    }
-    if (!this->ValidateArgument("Environment", "recency_table", this->recency_table, "")) {
-        return false;
-    }
-    if (this->planted_nodes == "") {
-        this->WriteToLogFile("No agents will be planted", Log::info);
+  if (!this->ValidateArgument("Environment", "edgelist", this->edgelist, "")) {
+    return false;
+  }
+  if (!this->ValidateArgument("Environment", "nodelist", this->nodelist, "")) {
+    return false;
+  }
+  if (!this->ValidateArgument("Environment", "growth_rate", this->growth_rate,
+                              -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Environment", "num_cycles", this->num_cycles,
+                              -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Environment", "out_degree_bag",
+                              this->out_degree_bag, "")) {
+    return false;
+  }
+  if (!this->ValidateArgument("Environment", "recency_table",
+                              this->recency_table, "")) {
+    return false;
+  }
+  if (this->planted_nodes == "") {
+    this->logger.WriteToLogFile("No agents will be planted", Log::info);
+  } else {
+    this->logger.WriteToLogFile(
+        std::format("planted_nodes: {}", this->planted_nodes), Log::info);
+  }
+  if (this->clonal_cartel_agent_file == "") {
+    this->logger.WriteToLogFile("No clonal cartel agents will be created",
+                                Log::info);
+  } else {
+    this->logger.WriteToLogFile(
+        "clonal agents: " + this->clonal_cartel_agent_file, Log::info);
+  }
+  if (!this->ValidateArgument("Agent", "fully_random_citations",
+                              this->fully_random_citations, -42)) {
+    return false;
+  }
+  if (this->preferential_weight == -42) {
+    this->logger.WriteToLogFile(
+        "Required parameter 'preferential_weight' was not "
+        "found in the 'Agent' section",
+        Log::error);
+    return false;
+  } else if (this->preferential_weight == -1) {
+    this->logger.WriteToLogFile("preferential_weight: randomized", Log::info);
+  } else {
+    this->logger.WriteToLogFile("preferential_weight: " +
+                                    std::to_string(this->preferential_weight),
+                                Log::info);
+  }
+  if (this->fitness_weight == -42) {
+    this->logger.WriteToLogFile(
+        "Required parameter 'fitness_weight' was not found in "
+        "the 'Agent' section",
+        Log::error);
+    return false;
+  } else if (this->fitness_weight == -1) {
+    this->logger.WriteToLogFile("fitness_weight: randomized", Log::info);
+  } else {
+    this->logger.WriteToLogFile(
+        std::format("fitness_weight: {}", this->fitness_weight), Log::info);
+  }
+  if (this->num_authors_weight == -42) {
+    this->logger.WriteToLogFile(
+        "Required parameter 'num_authors_weight' was not "
+        "found in the 'Agent' section",
+        Log::error);
+    return false;
+  } else if (this->num_authors_weight == -1) {
+    this->logger.WriteToLogFile("num_authors_weight: randomized", Log::info);
+  } else {
+    this->logger.WriteToLogFile("num_authors_weight: " +
+                                    std::to_string(this->num_authors_weight),
+                                Log::info);
+  }
+  if (this->author_reputation_weight == -42) {
+    this->logger.WriteToLogFile(
+        "Required parameter 'author_reputation_weight' was "
+        "not found in the 'Agent' section",
+        Log::error);
+    return false;
+  } else if (this->author_reputation_weight == -1) {
+    this->logger.WriteToLogFile("author_reputation_weight: randomized",
+                                Log::info);
+  } else {
+    this->logger.WriteToLogFile(
+        "author_reputation_weight: " +
+            std::to_string(this->author_reputation_weight),
+        Log::info);
+  }
+  if (!this->ValidateArgument("Agent", "fitness_value_min",
+                              this->fitness_value_min, -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "fitness_value_max",
+                              this->fitness_value_max, -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "fitness_lag_duration_min",
+                              this->fitness_lag_duration_min, -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "fitness_lag_duration_max",
+                              this->fitness_lag_duration_max, -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "fitness_peak_duration_min",
+                              this->fitness_peak_duration_min, -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "fitness_peak_duration_max",
+                              this->fitness_peak_duration_max, -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "same_year_citations",
+                              this->same_year_citations, -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "neighborhood_sample",
+                              this->neighborhood_sample, -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "num_authors_bag", this->num_authors_bag,
+                              "")) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "author_max_lifetime",
+                              this->author_max_lifetime, -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "cartel_outdegree_proportion",
+                              this->cartel_outdegree_proportion, -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "in_degree_threshold",
+                              this->in_degree_threshold, -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "fitness_threshold",
+                              this->fitness_threshold, -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "recency_threshold",
+                              this->recency_threshold, -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("Agent", "non_random_generator_probability",
+                              this->non_random_generator_probability, -42)) {
+    return false;
+  }
+  if (this->null_cartel) {
+    this->logger.WriteToLogFile("Using a null cartel model", Log::info);
+  } else {
+    this->logger.WriteToLogFile("Not using a null cartel model", Log::info);
+  }
+  if (this->use_alpha) {
+    if (this->alpha == -42) {
+      this->logger.WriteToLogFile(
+          "Required parameter 'alpha' was not found in the "
+          "'Agent' section while 'use_alpha' was true",
+          Log::error);
+      return false;
+    } else if (this->alpha == -1) {
+      this->logger.WriteToLogFile("alpha: randomized", Log::info);
     } else {
-        this->WriteToLogFile("planted_nodes: " + this->planted_nodes, Log::info);
+      this->logger.WriteToLogFile(std::format("alpha: {}", this->alpha),
+                                  Log::info);
     }
-    if (this->clonal_cartel_agent_file == "") {
-        this->WriteToLogFile("No clonal cartel agents will be created", Log::info);
+  } else {
+    if (this->alpha == -42) {
+      this->logger.WriteToLogFile(
+          "Alpha ignored. Agents will not split the "
+          "neighborhood into 1 and 2 distance neighborhoods",
+          Log::info);
     } else {
-        this->WriteToLogFile("clonal agents: " + this->clonal_cartel_agent_file, Log::info);
+      this->logger.WriteToLogFile(
+          "'use_alpha' is false but a value of" + std::to_string(this->alpha) +
+              " for 'alpha' was provided. Leave the alpha "
+              "line as 'alpha=' with an empty string as the "
+              "alpha value if alpha should be ignored.",
+          Log::error);
+      return false;
     }
-    if (!this->ValidateArgument("Agent", "fully_random_citations", this->fully_random_citations, -42)) {
-        return false;
-    }
-    if (this->preferential_weight == -42) {
-        this->WriteToLogFile("Required parameter 'preferential_weight' was not found in the 'Agent' section", Log::error);
-        return false;
-    } else if (this->preferential_weight == -1) {
-        this->WriteToLogFile("preferential_weight: randomized", Log::info);
-    } else {
-        this->WriteToLogFile("preferential_weight: " + std::to_string(this->preferential_weight), Log::info);
-    }
-    if (this->fitness_weight == -42) {
-        this->WriteToLogFile("Required parameter 'fitness_weight' was not found in the 'Agent' section", Log::error);
-        return false;
-    } else if (this->fitness_weight == -1) {
-        this->WriteToLogFile("fitness_weight: randomized", Log::info);
-    } else {
-        this->WriteToLogFile("fitness_weight: " + std::to_string(this->fitness_weight), Log::info);
-    }
-    if (this->num_authors_weight == -42) {
-        this->WriteToLogFile("Required parameter 'num_authors_weight' was not found in the 'Agent' section", Log::error);
-        return false;
-    } else if (this->num_authors_weight == -1) {
-        this->WriteToLogFile("num_authors_weight: randomized", Log::info);
-    } else {
-        this->WriteToLogFile("num_authors_weight: " + std::to_string(this->num_authors_weight), Log::info);
-    }
-    if (this->author_reputation_weight == -42) {
-        this->WriteToLogFile("Required parameter 'author_reputation_weight' was not found in the 'Agent' section", Log::error);
-        return false;
-    } else if (this->author_reputation_weight == -1) {
-        this->WriteToLogFile("author_reputation_weight: randomized", Log::info);
-    } else {
-        this->WriteToLogFile("author_reputation_weight: " + std::to_string(this->author_reputation_weight), Log::info);
-    }
-    if (!this->ValidateArgument("Agent", "fitness_value_min", this->fitness_value_min, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "fitness_value_max", this->fitness_value_max, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "fitness_lag_duration_min", this->fitness_lag_duration_min, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "fitness_lag_duration_max", this->fitness_lag_duration_max, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "fitness_peak_duration_min", this->fitness_peak_duration_min, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "fitness_peak_duration_max", this->fitness_peak_duration_max, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "same_year_citations", this->same_year_citations, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "neighborhood_sample", this->neighborhood_sample, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "num_authors_bag", this->num_authors_bag, "")) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "author_max_lifetime", this->author_max_lifetime, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "cartel_outdegree_proportion", this->cartel_outdegree_proportion, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "in_degree_threshold", this->in_degree_threshold, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "fitness_threshold", this->fitness_threshold, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "recency_threshold", this->recency_threshold, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("Agent", "non_random_generator_probability", this->non_random_generator_probability, -42)) {
-        return false;
-    }
-    if (this->null_cartel) {
-        this->WriteToLogFile("Using a null cartel model", Log::info);
-    } else {
-        this->WriteToLogFile("Not using a null cartel model", Log::info);
-    }
-    if (this->use_alpha) {
-        if (this->alpha == -42) {
-            this->WriteToLogFile("Required parameter 'alpha' was not found in the 'Agent' section while 'use_alpha' was true", Log::error);
-            return false;
-        } else if (this->alpha == -1) {
-            this->WriteToLogFile("alpha: randomized", Log::info);
-        } else {
-            this->WriteToLogFile("alpha: " + std::to_string(this->alpha), Log::info);
-        }
-    } else {
-        if (this->alpha == -42) {
-            this->WriteToLogFile("Alpha ignored. Agents will not split the neighborhood into 1 and 2 distance neighborhoods", Log::info);
-        } else {
-            this->WriteToLogFile("'use_alpha' is false but a value of" + std::to_string(this->alpha) + " for 'alpha' was provided. Leave the alpha line as 'alpha=' with an empty string as the alpha value if alpha should be ignored.", Log::error);
-            return false;
-        }
-    }
-    if (this->start_from_checkpoint) {
-        this->WriteToLogFile("Starting from a checkpoint. Make sure the edgelist and nodelist provided are the result of a previous simulation", Log::info);
-    } else {
-        this->WriteToLogFile("Not using checkpointing. Starting simulation from the first year.", Log::info);
-    }
-    if (!this->ValidateArgument("General", "output_file", this->output_file, "")) {
-        return false;
-    }
-    if (!this->ValidateArgument("General", "recency_bins", this->recency_bins, "")) {
-        return false;
-    }
-    if (!this->ValidateArgument("General", "auxiliary_information_file", this->auxiliary_information_file, "")) {
-        return false;
-    }
-    if (!this->ValidateArgument("General", "log_file", this->log_file, "")) {
-        return false;
-    }
-    if (!this->ValidateArgument("General", "num_processors", this->num_processors, -42)) {
-        return false;
-    }
-    if (!this->ValidateArgument("General", "log_level", this->log_level, -42)) {
-        return false;
-    }
-    return true;
+  }
+  if (this->start_from_checkpoint) {
+    this->logger.WriteToLogFile(
+        "Starting from a checkpoint. Make sure the edgelist and nodelist "
+        "provided are the result of a previous simulation",
+        Log::info);
+  } else {
+    this->logger.WriteToLogFile(
+        "Not using checkpointing. Starting simulation from the first year.",
+        Log::info);
+  }
+  if (!this->ValidateArgument("General", "output_file", this->output_file,
+                              "")) {
+    return false;
+  }
+  if (!this->ValidateArgument("General", "recency_bins", this->recency_bins,
+                              "")) {
+    return false;
+  }
+  if (!this->ValidateArgument("General", "auxiliary_information_file",
+                              this->auxiliary_information_file, "")) {
+    return false;
+  }
+  if (!this->ValidateArgument("General", "log_file", this->log_file, "")) {
+    return false;
+  }
+  if (!this->ValidateArgument("General", "num_processors", this->num_processors,
+                              -42)) {
+    return false;
+  }
+  if (!this->ValidateArgument("General", "log_level", this->log_level, -42)) {
+    return false;
+  }
+  return true;
 }
 
+void ABM::InitializeSimulation() {
+  this->graph =
+      new Graph(this->edgelist, this->nodelist, this->start_from_checkpoint,
+                this->num_authors_bag, this->author_max_lifetime);
+  this->InitializeSeedFitness(this->graph);
+  this->logger.WriteToLogFile("loaded this->graph", Log::info);
+  /* node ids to continous integer from 0 */
+  this->continuous_node_mapping = this->BuildContinuousNodeMapping(this->graph);
+
+  /* continous integer from 0 to node ids*/
+  this->reverse_continuous_node_mapping =
+      this->ReverseMapping(this->continuous_node_mapping);
+
+  this->start_year = this->GetMaxYear(this->graph) + 1;
+  this->next_node_id = this->GetMaxNode(this->graph) + 1;
+  this->initial_next_node_id = this->next_node_id;
+
+  /* get input to score arrays based on this->continuous_node_mapping */
+  this->initial_graph_size = this->graph->GetNodeSet().size();
+  this->final_graph_size = this->GetFinalGraphSize(this->graph);
+  this->logger.WriteToLogFile("final this->graph size is " +
+                                  std::to_string(this->final_graph_size),
+                              Log::info);
+  this->in_degree_vec.resize(this->final_graph_size);
+  this->fitness_vec.resize(this->final_graph_size);
+  this->num_authors_vec.resize(this->final_graph_size);
+  this->author_reputation_vec.resize(this->final_graph_size);
+  this->pa_vec.resize(this->final_graph_size);
+  this->fit_vec.resize(this->final_graph_size);
+  this->na_vec.resize(this->final_graph_size);
+  this->ar_vec.resize(this->final_graph_size);
+  this->random_weight_vec.resize(this->final_graph_size);
+  this->current_score_vec.resize(this->final_graph_size);
+  // this->initial_graph_size in the continuous mapping
+  int added_size = this->final_graph_size - this->initial_graph_size;
+  this->pa_weight_vec.assign(added_size, -1);
+  this->fit_weight_vec.assign(added_size, -1);
+  this->num_authors_weight_vec.assign(added_size, -1);
+  this->author_reputation_weight_vec.assign(added_size, -1);
+  this->out_degree_vec.assign(added_size, -1);
+  this->alpha_vec.assign(added_size, -1);
+  this->fitness_lag_duration_vec.assign(added_size, -1);
+  this->fitness_peak_value_vec.assign(added_size, -1);
+  this->fitness_peak_duration_vec.assign(added_size, -1);
+  this->planted_author_id_vec.assign(added_size, -1);
+  MetricsEngine::PopulateWeightSpans(
+      this->pa_weight_vec, this->fit_weight_vec, this->num_authors_weight_vec,
+      this->author_reputation_weight_vec, this->preferential_weight,
+      this->fitness_weight, this->num_authors_weight,
+      this->author_reputation_weight);
+  MetricsEngine::PopulateAlphaSpan(this->alpha_vec, this->use_alpha,
+                                   this->alpha, this->minimum_alpha);
+  MetricsEngine::PopulateOutDegreeSpan(this->out_degree_vec,
+                                       this->out_degree_bag_vec);
+  MetricsEngine::PopulateFitnessSpans(
+      this->fitness_lag_duration_vec, this->fitness_peak_value_vec,
+      this->fitness_peak_duration_vec, this->fitness_lag_duration_min,
+      this->fitness_lag_duration_max, this->fitness_value_min,
+      this->fitness_value_max, this->fitness_peak_duration_min,
+      this->fitness_peak_duration_max, this->fitness_alpha);
+  MetricsEngine::PopulateNumAuthorsSpan(this->graph, this->num_authors_vec);
+  this->planted_nodes_line_number_map = this->PlantNodes(
+      this->graph, this->pa_weight_vec, this->fit_weight_vec,
+      this->num_authors_weight_vec, this->author_reputation_weight_vec,
+      this->out_degree_vec, this->alpha_vec, this->fitness_lag_duration_vec,
+      this->fitness_peak_value_vec, this->fitness_peak_duration_vec,
+      this->num_authors_vec, this->planted_author_id_vec);
+}
+
+void ABM::RunSimulationLoop() {
+  std::vector<int> new_nodes_vec;
+  std::vector<std::pair<int, int>> new_edges_vec;
+  std::set<int> same_year_source_nodes;
+  std::unordered_map<int, double> exp_cached_results;
+  for (int i = 0; i < 1000; i++) {
+    exp_cached_results[i] = std::max(pow(i, this->gamma), 1.0) + 1;
+  }
+  std::unordered_map<int, double> binned_recency_probabilities =
+      GetBinnedRecencyProbabilities();
+  Eigen::setNbThreads(1);
+  pcg32 &generator = Utils::GetThreadLocalPRNG();
+  std::uniform_real_distribution<double>
+      non_random_generator_uniform_distribution{0, 1};
+  for (int current_year = this->start_year;
+       current_year < this->start_year + this->num_cycles; current_year++) {
+    this->logger.prev_time = std::chrono::steady_clock::now();
+    int current_graph_size = this->graph->GetNodeSet().size();
+    this->logger.WriteToLogFile(
+        "current year is: " + std::to_string(current_year) +
+            " and the this->graph is " + std::to_string(current_graph_size) +
+            " nodes large",
+        Log::info);
+    MetricsEngine::FillInDegreeSpan(this->graph, this->continuous_node_mapping,
+                                    this->in_degree_vec);
+    this->logger.LogTime(current_year, "Fill in-degree array");
+    MetricsEngine::FillFitnessSpan(this->graph, this->continuous_node_mapping,
+                                   current_year, this->fitness_vec,
+                                   this->fitness_decay_alpha);
+    this->logger.LogTime(current_year, "Fill fitness array");
+    MetricsEngine::CalculateExpScores(
+        exp_cached_results,
+        std::span<int>{this->in_degree_vec.data(), (size_t)current_graph_size},
+        std::span<double>{this->pa_vec.data(), (size_t)current_graph_size},
+        this->gamma);
+    this->logger.LogTime(current_year, "Process in-degree array");
+    MetricsEngine::CalculateExpScores(
+        exp_cached_results,
+        std::span<int>{this->fitness_vec.data(), (size_t)current_graph_size},
+        std::span<double>{this->fit_vec.data(), (size_t)current_graph_size},
+        this->gamma);
+    this->logger.LogTime(current_year, "Process fitness array");
+    MetricsEngine::CalculateExpScores(
+        exp_cached_results,
+        std::span<int>{this->num_authors_vec.data(),
+                       (size_t)current_graph_size},
+        std::span<double>{this->na_vec.data(), (size_t)current_graph_size},
+        this->gamma);
+    this->logger.LogTime(current_year, "Process num authors array");
+
+    /* initialize new nodes */
+    int num_new_nodes = std::ceil(current_graph_size * this->growth_rate);
+    this->logger.WriteToLogFile("making " + std::to_string(num_new_nodes) +
+                                    " nodes this year",
+                                Log::info);
+    for (int i = 0; i < num_new_nodes; i++) {
+      this->continuous_node_mapping[this->next_node_id] =
+          current_graph_size + i;
+      this->reverse_continuous_node_mapping[current_graph_size + i] =
+          this->next_node_id;
+      new_nodes_vec.push_back(this->next_node_id);
+      this->graph->SetIntAttribute("year", this->next_node_id, current_year);
+      this->graph->SetStringAttribute("type", this->next_node_id, "agent");
+      this->next_node_id++;
+    }
+    this->logger.LogTime(current_year, "Create new node ids");
+    this->FillSameYearSourceNodes(same_year_source_nodes, new_nodes_vec.size());
+    this->logger.LogTime(current_year, "Pick same year nodes");
+
+    std::vector<int> eligible_generator_nodes = this->GetEligibleGeneratorNodes(
+        this->graph, current_graph_size, this->reverse_continuous_node_mapping,
+        this->in_degree_vec, this->fitness_vec, this->in_degree_threshold,
+        this->fitness_threshold, this->start_year, current_year,
+        this->recency_threshold);
+    std::set<int> cartel_author_ids;
+    for (auto const &cartel_id : this->graph->GetCartelSet()) {
+      std::set<int> current_cartel_authors =
+          this->graph->GetCartelAuthors(cartel_id);
+      cartel_author_ids.insert(current_cartel_authors.begin(),
+                               current_cartel_authors.end());
+    }
+    std::set<int> initial_cartel_author_ids = cartel_author_ids;
+    for (size_t i = 0; i < new_nodes_vec.size(); i++) {
+      int author_id = -1;
+      int new_node = new_nodes_vec[i];
+      int weight_span_index =
+          this->continuous_node_mapping[new_node] - this->initial_graph_size;
+      int graph_span_index = this->continuous_node_mapping[new_node];
+      if (this->planted_nodes_line_number_map.contains(weight_span_index) &&
+          this->planted_author_id_vec[weight_span_index] != -1) {
+        author_id = this->planted_author_id_vec[weight_span_index];
+        this->graph->UpdateAuthorManual(author_id);
+        this->UpdateGraphAttributesAuthors(this->graph, new_node, author_id);
+      } else if (!this->planted_nodes_line_number_map.contains(
+                     weight_span_index) &&
+                 !cartel_author_ids.empty()) {
+        author_id = *(cartel_author_ids.begin());
+        this->graph->UpdateAuthorManual(author_id);
+        cartel_author_ids.erase(cartel_author_ids.begin());
+        this->UpdateGraphAttributesAuthors(this->graph, new_node, author_id);
+        if (this->clonal_cartel_agent.num_authors) {
+          this->num_authors_vec[graph_span_index] =
+              this->clonal_cartel_agent.num_authors.value();
+        }
+        if (this->clonal_cartel_agent.pa_weight) {
+          this->pa_weight_vec[weight_span_index] =
+              this->clonal_cartel_agent.pa_weight.value();
+        }
+        if (this->clonal_cartel_agent.fit_weight) {
+          this->fit_weight_vec[weight_span_index] =
+              this->clonal_cartel_agent.fit_weight.value();
+        }
+        if (this->clonal_cartel_agent.num_authors_weight) {
+          this->num_authors_weight_vec[weight_span_index] =
+              this->clonal_cartel_agent.num_authors_weight.value();
+        }
+        if (this->clonal_cartel_agent.author_reputation_weight) {
+          this->author_reputation_weight_vec[weight_span_index] =
+              this->clonal_cartel_agent.author_reputation_weight.value();
+        }
+        if (this->clonal_cartel_agent.out_degree) {
+          this->out_degree_vec[weight_span_index] =
+              this->clonal_cartel_agent.out_degree.value();
+        }
+        if (this->clonal_cartel_agent.alpha) {
+          this->alpha_vec[weight_span_index] =
+              this->clonal_cartel_agent.alpha.value();
+        }
+        if (this->clonal_cartel_agent.fitness_lag_duration) {
+          this->fitness_lag_duration_vec[weight_span_index] =
+              this->clonal_cartel_agent.fitness_lag_duration.value();
+        }
+        if (this->clonal_cartel_agent.fitness_peak_value) {
+          this->fitness_peak_value_vec[weight_span_index] =
+              this->clonal_cartel_agent.fitness_peak_value.value();
+        }
+        if (this->clonal_cartel_agent.fitness_peak_duration) {
+          this->fitness_peak_duration_vec[weight_span_index] =
+              this->clonal_cartel_agent.fitness_peak_duration.value();
+        }
+      } else {
+        author_id =
+            this->graph->GetNextAuthor(current_year, initial_cartel_author_ids);
+        this->UpdateGraphAttributesAuthors(this->graph, new_node, author_id);
+      }
+
+      double new_node_non_random_draw =
+          non_random_generator_uniform_distribution(generator);
+      // if author part of cartel, pick randomly from cartel list
+      if (this->graph->GetCartelID(author_id) > 0) {
+        std::vector<int> cartel_generator_nodes =
+            this->GetCartelGeneratorNodes(this->graph, author_id);
+        std::vector<int> generator_nodes =
+            this->GetGeneratorNodesFromSet(cartel_generator_nodes);
+        this->UpdateGraphAttributesGeneratorNodes(this->graph, new_node,
+                                                  generator_nodes);
+      } else if (new_node_non_random_draw <
+                 this->non_random_generator_probability) {
+        std::vector<int> generator_nodes =
+            this->GetGeneratorNodesFromSet(eligible_generator_nodes);
+        this->UpdateGraphAttributesGeneratorNodes(this->graph, new_node,
+                                                  generator_nodes);
+      } else {
+        std::vector<int> generator_nodes = this->GetGeneratorNodes(
+            this->graph, this->reverse_continuous_node_mapping);
+        this->UpdateGraphAttributesGeneratorNodes(this->graph, new_node,
+                                                  generator_nodes);
+      }
+    }
+    this->logger.LogTime(current_year, "Pick generator nodes");
+
+    MetricsEngine::FillAuthorReputationSpan(this->graph,
+                                            this->continuous_node_mapping,
+                                            this->author_reputation_vec);
+    this->logger.LogTime(current_year, "Fill author reputation array");
+    MetricsEngine::CalculateExpScores(
+        exp_cached_results,
+        std::span<int>{this->author_reputation_vec.data(),
+                       (size_t)current_graph_size},
+        std::span<double>{this->ar_vec.data(), (size_t)current_graph_size},
+        this->gamma);
+    this->logger.LogTime(current_year, "Process author reputation array");
+
+    std::vector<int> sampled_neighborhood_sizes_map(new_nodes_vec.size());
+    std::vector<int> fully_random_citations_map(new_nodes_vec.size());
+    std::vector<std::vector<int>> sampled_binned_neighborhood_sizes_map(
+        new_nodes_vec.size());
+    NodeMetrics metrics = {
+        std::span<double>{this->pa_vec.data(), (size_t)current_graph_size},
+        std::span<double>{this->fit_vec.data(), (size_t)current_graph_size},
+        std::span<double>{this->na_vec.data(), (size_t)current_graph_size},
+        std::span<double>{this->ar_vec.data(), (size_t)current_graph_size}};
+
+    std::vector<std::pair<std::string, int>> parallel_stage_time_vec;
+#pragma omp parallel for reduction(custom_merge_vec_int : new_edges_vec)       \
+    reduction(merge_str_int_pair_vecs : parallel_stage_time_vec)
+    for (size_t i = 0; i < new_nodes_vec.size(); i++) {
+      std::chrono::time_point<std::chrono::steady_clock> local_prev_time =
+          std::chrono::steady_clock::now();
+      std::vector<std::pair<int, int>> local_new_edges_vec;
+      std::vector<std::pair<std::string, int>> local_parallel_stage_time_vec;
+
+      std::vector<int> citations_vec(this->max_out_degree + 1);
+      std::span<int> citations(citations_vec);
+      int new_node = new_nodes_vec[i];
+      // this->continuous_node_mapping = node id -> 0..n but guaranteed 0 ..
+      // initial this->graph size are seed nodes initial graphsize .. n are
+      // agent nodes
+      int weight_span_index =
+          this->continuous_node_mapping[new_node] - this->initial_graph_size;
+      double pa_weight = this->pa_weight_vec[weight_span_index];
+      double fit_weight = this->fit_weight_vec[weight_span_index];
+      double num_authors_weight =
+          this->num_authors_weight_vec[weight_span_index];
+      double author_reputation_weight =
+          this->author_reputation_weight_vec[weight_span_index];
+      AgentWeights weights = {pa_weight, fit_weight, num_authors_weight,
+                              author_reputation_weight};
+      double alpha = this->alpha_vec[weight_span_index];
+      int author_id = this->graph->GetIntAttribute("author_id", new_node);
+      std::vector<int> generator_nodes =
+          this->GetGraphAttributesGeneratorNodes(this->graph, new_node);
+      int num_hops = 2;
+      // if use alpha then map has keys 1 and 2
+      // if use alpha false then map has only key 1
+      std::unordered_map<int, std::vector<int>> n_hop_map =
+          this->neighborhood_search->GetNeighborhoodMap(
+              this->graph, current_year, generator_nodes, num_hops);
+
+      int num_cartel_citations_limit =
+          std::round(this->cartel_outdegree_proportion *
+                     this->out_degree_vec[weight_span_index]);
+      int num_fully_random_cited_reserved = std::floor(
+          this->fully_random_citations *
+          this->out_degree_vec[weight_span_index]); // e.g., 5% of out-degree.
+                                                    // some small number
+      int remaining_citation_quota = this->out_degree_vec[weight_span_index];
+      remaining_citation_quota -=
+          generator_nodes.size(); // should be 1 and always decremented
+      remaining_citation_quota -=
+          same_year_source_nodes.count(i); // could be 0 or 1
+      int current_cartel_size = 0;
+      if (this->graph->GetCartelID(author_id) > 0) {
+        current_cartel_size =
+            this->graph->GetCartelAuthors(this->graph->GetCartelID(author_id))
+                .size() -
+            1; // -1 since we cite others only
+      }
+      int num_cartel_citations =
+          std::min(num_cartel_citations_limit, current_cartel_size);
+      remaining_citation_quota -= num_cartel_citations;
+
+      if (remaining_citation_quota > num_fully_random_cited_reserved) {
+        remaining_citation_quota -= num_fully_random_cited_reserved;
+      } else {
+        num_fully_random_cited_reserved = 0;
+      }
+
+      int num_actually_cited = 0;
+      if (same_year_source_nodes.count(i)) {
+        num_actually_cited += this->citation_engine->MakeSameYearCitations(
+            same_year_source_nodes, new_nodes_vec.size(),
+            this->reverse_continuous_node_mapping, citations,
+            current_graph_size);
+      }
+      local_prev_time = this->logger.LocalLogTime(local_parallel_stage_time_vec,
+                                                  local_prev_time,
+                                                  "make same year citations");
+
+      num_actually_cited += this->citation_engine->MakeCartelCitations(
+          this->graph, generator_nodes, author_id,
+          this->continuous_node_mapping, n_hop_map,
+          citations.subspan(num_actually_cited), num_cartel_citations,
+          current_year, binned_recency_probabilities, metrics, weights,
+          current_graph_size);
+      // remove cartel cited nodes from n_hop_map
+      std::set<int> cited_elements(citations.begin(),
+                                   citations.begin() + num_actually_cited);
+      std::unordered_map<int, std::vector<int>> filtered_n_hop_map;
+      for (auto const &[distance, node_vec] : n_hop_map) {
+        filtered_n_hop_map[distance].reserve(this->neighborhood_sample);
+        for (auto const &node_id : node_vec) {
+          if (!cited_elements.contains(node_id)) {
+            filtered_n_hop_map[distance].push_back(node_id);
+          }
+        }
+      }
+      n_hop_map = filtered_n_hop_map;
+      if (remaining_citation_quota > 0) {
+        std::unordered_map<int, int> num_citations_per_neighborhood =
+            this->neighborhood_search->GetNumCitationsPerNeighborhood(
+                alpha, remaining_citation_quota, n_hop_map);
+        for (size_t current_neighborhood_index = 1;
+             current_neighborhood_index < n_hop_map.size() + 1;
+             current_neighborhood_index++) { // 2 iter if use alpha true
+          sampled_neighborhood_sizes_map[i] +=
+              n_hop_map.at(current_neighborhood_index).size();
+          std::unordered_map<int, std::vector<int>> binned_neighborhood =
+              this->neighborhood_search->BinNeighborhood(
+                  this->graph, current_year,
+                  n_hop_map.at(current_neighborhood_index));
+          local_prev_time =
+              this->logger.LocalLogTime(local_parallel_stage_time_vec,
+                                        local_prev_time, "bin neighborhood");
+
+          std::unordered_map<int, int> outdegree_per_bin_map =
+              this->neighborhood_search->BinOutdegrees(
+                  binned_neighborhood,
+                  num_citations_per_neighborhood.at(current_neighborhood_index),
+                  binned_recency_probabilities);
+          for (int bin_index = 0;
+               bin_index < this->neighborhood_search->num_bins - 1;
+               bin_index++) { // if there's only 1 bin then this is always false
+            num_actually_cited += this->citation_engine->MakeCitations(
+                this->graph, this->continuous_node_mapping, current_year,
+                binned_neighborhood[bin_index],
+                citations.subspan(num_actually_cited), metrics, weights,
+                current_graph_size, outdegree_per_bin_map[bin_index]);
+          }
+          num_actually_cited +=
+              this->citation_engine->MakeUniformRandomCitations(
+                  this->graph, this->continuous_node_mapping, current_year,
+                  binned_neighborhood[this->neighborhood_search->num_bins - 1],
+                  citations.subspan(num_actually_cited), current_graph_size,
+                  outdegree_per_bin_map[this->neighborhood_search->num_bins -
+                                        1]);
+        }
+      }
+      for (int j = 0; j < num_actually_cited; j++) {
+        if (citations[j] < 0) {
+          std::cerr
+              << "[checking before uniform random to this->graph] regular "
+                 "citation negative: "
+              << std::to_string(citations[j]) << std::endl;
+        }
+      }
+
+      local_prev_time = this->logger.LocalLogTime(
+          local_parallel_stage_time_vec, local_prev_time,
+          "make neighborhood citations");
+
+      int num_fully_random_cited = this->out_degree_vec[weight_span_index] -
+                                   num_actually_cited -
+                                   generator_nodes.size(); // finalized later
+      fully_random_citations_map[i] = num_fully_random_cited;
+      num_actually_cited +=
+          this->citation_engine->MakeUniformRandomCitationsFromGraph(
+              this->graph, this->reverse_continuous_node_mapping,
+              generator_nodes, citations, num_actually_cited,
+              num_fully_random_cited);
+      local_prev_time =
+          this->logger.LocalLogTime(local_parallel_stage_time_vec,
+                                    local_prev_time, "make random citations");
+
+      for (size_t j = 0; j < generator_nodes.size(); j++) {
+        if (generator_nodes[j] < 0) {
+          std::cerr << "generator node negative: "
+                    << std::to_string(generator_nodes[j]) << std::endl;
+        }
+        local_new_edges_vec.push_back({new_node, generator_nodes[j]});
+      }
+      for (int j = 0; j < num_actually_cited; j++) {
+        if (citations[j] < 0) {
+          std::cerr << "regular citation negative: "
+                    << std::to_string(citations[j]) << " at index "
+                    << std::to_string(j) << std::endl;
+          std::cerr << "num_actually_cited: "
+                    << std::to_string(num_actually_cited) << std::endl;
+        }
+        local_new_edges_vec.push_back({new_node, citations[j]});
+      }
+      new_edges_vec.insert(new_edges_vec.end(), local_new_edges_vec.begin(),
+                           local_new_edges_vec.end());
+      local_prev_time = this->logger.LocalLogTime(
+          local_parallel_stage_time_vec, local_prev_time, "record edges");
+      parallel_stage_time_vec.insert(parallel_stage_time_vec.end(),
+                                     local_parallel_stage_time_vec.begin(),
+                                     local_parallel_stage_time_vec.end());
+    } // end of omp parallel loop
+    std::map<std::string, int> per_stage_time_map;
+    for (size_t i = 0; i < parallel_stage_time_vec.size(); i++) {
+      per_stage_time_map[parallel_stage_time_vec[i].first] +=
+          parallel_stage_time_vec[i].second;
+    }
+    this->logger.LogTime(current_year, "find neighborhood",
+                         per_stage_time_map["retrieve neighborhood"]);
+    this->logger.LogTime(current_year, "bin neighborhood",
+                         per_stage_time_map["bin neighborhood"]);
+    this->logger.LogTime(current_year, "make same year citations",
+                         per_stage_time_map["make same year citations"]);
+    this->logger.LogTime(current_year, "make neighborhood citations",
+                         per_stage_time_map["make neighborhood citations"]);
+    this->logger.LogTime(current_year, "make random citations",
+                         per_stage_time_map["make random citations"]);
+    this->logger.LogTime(current_year, "record edges",
+                         per_stage_time_map["record edges"]);
+    for (size_t i = 0; i < new_edges_vec.size(); i++) {
+      int new_node = new_edges_vec[i].first;
+      int destination_id = new_edges_vec[i].second;
+      this->graph->AddEdge({new_node, destination_id});
+      if (new_node < 0 || destination_id < 0) {
+        std::cerr << "making edge" << std::to_string(new_node) << " -> "
+                  << std::to_string(destination_id) << std::endl;
+      }
+    }
+    this->logger.LogTime(current_year, "Add edges to this->graph");
+
+    for (size_t i = 0; i < new_nodes_vec.size(); i++) {
+      int new_node = new_nodes_vec[i];
+      this->graph->SetIntAttribute("sampled_neighborhood_size", new_node,
+                                   sampled_neighborhood_sizes_map[i]);
+      this->graph->SetIntAttribute("fully_random_citations", new_node,
+                                   fully_random_citations_map[i]);
+    }
+
+    this->logger.LogTime(current_year,
+                         "Update this->graph attributes (neighborhood sizes)");
+    this->UpdateGraphAttributesFitnesses(
+        this->graph, new_nodes_vec, this->continuous_node_mapping,
+        this->fitness_lag_duration_vec, this->fitness_peak_value_vec,
+        this->fitness_peak_duration_vec, this->initial_graph_size);
+    this->logger.LogTime(current_year, "Assign fitness values to new nodes");
+    this->graph->ComputeAuthorReputations();
+    this->UpdateGraphAttributesInitialAuthorReputations(this->graph,
+                                                        new_nodes_vec);
+    new_nodes_vec.clear();
+    new_edges_vec.clear();
+    same_year_source_nodes.clear();
+  }
+}
+
+void ABM::FinalizeSimulation() {
+  this->logger.WriteToLogFile("finished sim", Log::info);
+  this->graph->WriteGraph(this->output_file);
+  this->logger.WriteToLogFile("wrote this->graph", Log::info);
+
+  this->UpdateGraphAttributesWeights(
+      this->graph, this->initial_next_node_id, this->pa_weight_vec,
+      this->fit_weight_vec, this->num_authors_weight_vec,
+      this->author_reputation_weight_vec,
+      this->final_graph_size - this->initial_graph_size);
+  this->logger.WriteToLogFile("updated weights", Log::info);
+  this->UpdateGraphAttributesOutDegrees(
+      this->graph, this->initial_next_node_id, this->out_degree_vec,
+      this->final_graph_size - this->initial_graph_size);
+  this->logger.WriteToLogFile("updated out-degrees", Log::info);
+  this->UpdateGraphAttributesAlphas(
+      this->graph, this->initial_next_node_id, this->alpha_vec,
+      this->final_graph_size - this->initial_graph_size);
+  this->logger.WriteToLogFile("updated alphas", Log::info);
+  this->UpdateGraphAttributesNumAuthors(
+      this->graph, this->continuous_node_mapping, this->num_authors_vec);
+  this->logger.WriteToLogFile("updated num authors", Log::info);
+  this->UpdateGraphAttributesPlantedNodesLineNumbers(
+      this->graph, this->initial_next_node_id,
+      this->planted_nodes_line_number_map);
+  this->logger.WriteToLogFile("updated planted nodes line numbers", Log::info);
+
+  for (auto const &node_id : this->graph->GetNodeSet()) {
+    this->graph->SetIntAttribute("in_degree", node_id,
+                                 this->graph->GetInDegree(node_id));
+    this->graph->SetIntAttribute("out_degree", node_id,
+                                 this->graph->GetOutDegree(node_id));
+  }
+  this->logger.WriteToLogFile("computed in-degree and out-degrees", Log::info);
+  this->graph->ComputeAuthorReputations();
+  this->logger.WriteToLogFile("computed author reputations", Log::info);
+  this->graph->WriteAttributes(this->auxiliary_information_file);
+  this->logger.WriteToLogFile("wrote nodelist", Log::info);
+  delete this->graph;
+}
 
 int ABM::main() {
-    if (!this->ValidateBinBoundaries()) {
-        return 1;
-    }
-    Graph* graph = new Graph(this->edgelist, this->nodelist, this->start_from_checkpoint, this->num_authors_bag, this->author_max_lifetime);
-    this->InitializeSeedFitness(graph);
-    this->WriteToLogFile("loaded graph", Log::info);
-    /* node ids to continous integer from 0 */
-    std::unordered_map<int, int> continuous_node_mapping = this->BuildContinuousNodeMapping(graph);
+  if (!this->ValidateBinBoundaries()) {
+    return 1;
+  }
 
-    /* continous integer from 0 to node ids*/
-    std::unordered_map<int, int> reverse_continuous_node_mapping = this->ReverseMapping(continuous_node_mapping);
+  this->InitializeSimulation();
+  this->RunSimulationLoop();
+  this->FinalizeSimulation();
 
-    int start_year = this->GetMaxYear(graph) + 1;
-    int next_node_id = this->GetMaxNode(graph) + 1;
-    int initial_next_node_id = next_node_id;
-
-    /* get input to score arrays based on continuous_node_mapping */
-    int initial_graph_size = graph->GetNodeSet().size();
-    int final_graph_size = this->GetFinalGraphSize(graph);
-    this->WriteToLogFile("final graph size is " + std::to_string(final_graph_size), Log::info);
-    int* in_degree_arr = new int[final_graph_size]; // live updated in-degree array (changes every year)
-    int* fitness_arr = new int[final_graph_size]; // live updated fitness array (changes every year)
-    int* num_authors_arr = new int[final_graph_size];
-    int* author_reputation_arr = new int[final_graph_size];
-    double* pa_arr = new double[final_graph_size]; // exp of in-degree array
-    double* fit_arr = new double[final_graph_size]; // exp of fitness array
-    double* na_arr = new double[final_graph_size]; // exp of num_authors_arr
-    double* ar_arr = new double[final_graph_size]; // exp of author_reputation_arr
-    double* random_weight_arr = new double[final_graph_size];
-    double* current_score_arr = new double[final_graph_size];
-
-    // the first new agent node has index 0 but is actually index initial_graph_size in the continuous mapping
-    double* pa_weight_arr = new double[final_graph_size - initial_graph_size];
-    double* fit_weight_arr = new double[final_graph_size - initial_graph_size];
-    double* num_authors_weight_arr = new double[final_graph_size - initial_graph_size];
-    double* author_reputation_weight_arr = new double[final_graph_size - initial_graph_size];
-    int* out_degree_arr = new int[final_graph_size - initial_graph_size];
-    double* alpha_arr = new double[final_graph_size - initial_graph_size];
-    int* fitness_lag_duration_arr = new int[final_graph_size - initial_graph_size];
-    int* fitness_peak_value_arr = new int[final_graph_size - initial_graph_size];
-    int* fitness_peak_duration_arr = new int[final_graph_size - initial_graph_size];
-
-    int* planted_author_id_arr = new int[final_graph_size - initial_graph_size];
-    std::fill(planted_author_id_arr, planted_author_id_arr + final_graph_size - initial_graph_size, -1);
-    // int* planted_cartel_id_arr = new int[final_graph_size - initial_graph_size];
-
-    this->PopulateWeightArrs(pa_weight_arr, fit_weight_arr, num_authors_weight_arr, author_reputation_weight_arr, final_graph_size - initial_graph_size);
-    this->PopulateAlphaArr(alpha_arr, final_graph_size - initial_graph_size);
-    this->PopulateOutDegreeArr(out_degree_arr, final_graph_size - initial_graph_size);
-    this->PopulateFitnessArrs(fitness_lag_duration_arr, fitness_peak_value_arr, fitness_peak_duration_arr, final_graph_size - initial_graph_size);
-    this->PopulateNumAuthorsArr(graph, num_authors_arr, final_graph_size);
-    std::unordered_map<int, int> planted_nodes_line_number_map = this->PlantNodes(graph, pa_weight_arr, fit_weight_arr, num_authors_weight_arr, author_reputation_weight_arr, out_degree_arr, alpha_arr, fitness_lag_duration_arr, fitness_peak_value_arr, fitness_peak_duration_arr, num_authors_arr, planted_author_id_arr);
-
-
-    std::vector<int> new_nodes_vec;
-    std::vector<std::pair<int, int>> new_edges_vec;
-    std::set<int> same_year_source_nodes;
-    std::unordered_map<int, double> exp_cached_results;
-    for(int i = 0; i < 1000; i ++) {
-        exp_cached_results[i] = std::max(pow(i, this->gamma), 1.0) + 1;
-    }
-    std::unordered_map<int, double> binned_recency_probabilities = GetBinnedRecencyProbabilities();
-    Eigen::setNbThreads(1);
-    pcg_extras::seed_seq_from<std::random_device> rand_dev;
-    pcg32 generator(rand_dev);
-    std::uniform_real_distribution<double> non_random_generator_uniform_distribution{0, 1};
-    for (int current_year = start_year; current_year < start_year + this->num_cycles; current_year ++) {
-        this->prev_time = std::chrono::steady_clock::now();
-        int current_graph_size = graph->GetNodeSet().size();
-        this->WriteToLogFile("current year is: " + std::to_string(current_year) + " and the graph is " + std::to_string(current_graph_size) + " nodes large", Log::info);
-        this->FillInDegreeArr(graph, continuous_node_mapping, in_degree_arr);
-        this->LogTime(current_year, "Fill in-degree array");
-        this->FillFitnessArr(graph, continuous_node_mapping, current_year, fitness_arr);
-        this->LogTime(current_year, "Fill fitness array");
-        this->CalculateExpScores(exp_cached_results, in_degree_arr, pa_arr, current_graph_size);
-        this->LogTime(current_year, "Process in-degree array");
-        this->CalculateExpScores(exp_cached_results, fitness_arr, fit_arr, current_graph_size);
-        this->LogTime(current_year, "Process fitness array");
-        this->CalculateExpScores(exp_cached_results, num_authors_arr, na_arr, current_graph_size);
-        this->LogTime(current_year, "Process num authors array");
-
-        /* initialize new nodes */
-        int num_new_nodes = std::ceil(current_graph_size * this->growth_rate);
-        this->WriteToLogFile("making " + std::to_string(num_new_nodes) + " nodes this year", Log::info);
-        for(int i = 0; i < num_new_nodes; i ++) {
-            continuous_node_mapping[next_node_id] = current_graph_size + i;
-            reverse_continuous_node_mapping[current_graph_size + i] = next_node_id;
-            new_nodes_vec.push_back(next_node_id);
-            graph->SetIntAttribute("year", next_node_id, current_year);
-            graph->SetStringAttribute("type", next_node_id, "agent");
-            next_node_id ++;
-        }
-        this->LogTime(current_year, "Create new node ids");
-        this->FillSameYearSourceNodes(same_year_source_nodes, new_nodes_vec.size());
-        this->LogTime(current_year, "Pick same year nodes");
-
-
-        std::vector<int> eligible_generator_nodes = this->GetEligibleGeneratorNodes(graph, current_graph_size, reverse_continuous_node_mapping, in_degree_arr, fitness_arr, this->in_degree_threshold, this->fitness_threshold, start_year, current_year, this->recency_threshold);
-        std::set<int> cartel_author_ids;
-        for(auto const& cartel_id : graph->GetCartelSet()) {
-            std::set<int> current_cartel_authors = graph->GetCartelAuthors(cartel_id);
-            cartel_author_ids.insert(current_cartel_authors.begin(), current_cartel_authors.end());
-        }
-        std::set<int> initial_cartel_author_ids = cartel_author_ids;
-        for(size_t i = 0; i < new_nodes_vec.size(); i ++) {
-            int author_id = -1;
-            int new_node = new_nodes_vec[i];
-            int weight_arr_index = continuous_node_mapping[new_node] - initial_graph_size;
-            int graph_arr_index = continuous_node_mapping[new_node];
-            if (planted_nodes_line_number_map.contains(weight_arr_index) && planted_author_id_arr[weight_arr_index] != -1) {
-                author_id = planted_author_id_arr[weight_arr_index];
-                graph->UpdateAuthorManual(author_id);
-                this->UpdateGraphAttributesAuthors(graph, new_node, author_id);
-            } else if (!planted_nodes_line_number_map.contains(weight_arr_index) && !cartel_author_ids.empty()) {
-                author_id = *(cartel_author_ids.begin());
-                graph->UpdateAuthorManual(author_id);
-                cartel_author_ids.erase(cartel_author_ids.begin());
-                this->UpdateGraphAttributesAuthors(graph, new_node, author_id);
-                if (this->clonal_cartel_agent.num_authors) {
-                    num_authors_arr[graph_arr_index] = this->clonal_cartel_agent.num_authors.value();
-                }
-                if (this->clonal_cartel_agent.pa_weight) {
-                    pa_weight_arr[weight_arr_index] = this->clonal_cartel_agent.pa_weight.value();
-                }
-                if (this->clonal_cartel_agent.fit_weight) {
-                    fit_weight_arr[weight_arr_index] = this->clonal_cartel_agent.fit_weight.value();
-                }
-                if (this->clonal_cartel_agent.num_authors_weight) {
-                    num_authors_weight_arr[weight_arr_index] = this->clonal_cartel_agent.num_authors_weight.value();
-                }
-                if (this->clonal_cartel_agent.author_reputation_weight) {
-                    author_reputation_weight_arr[weight_arr_index] = this->clonal_cartel_agent.author_reputation_weight.value();
-                }
-                if (this->clonal_cartel_agent.out_degree) {
-                    out_degree_arr[weight_arr_index] = this->clonal_cartel_agent.out_degree.value();
-                }
-                if (this->clonal_cartel_agent.alpha) {
-                    alpha_arr[weight_arr_index] = this->clonal_cartel_agent.alpha.value();
-                }
-                if (this->clonal_cartel_agent.fitness_lag_duration) {
-                    fitness_lag_duration_arr[weight_arr_index] = this->clonal_cartel_agent.fitness_lag_duration.value();
-                }
-                if (this->clonal_cartel_agent.fitness_peak_value) {
-                    fitness_peak_value_arr[weight_arr_index] = this->clonal_cartel_agent.fitness_peak_value.value();
-                }
-                if (this->clonal_cartel_agent.fitness_peak_duration) {
-                    fitness_peak_duration_arr[weight_arr_index] = this->clonal_cartel_agent.fitness_peak_duration.value();
-                }
-            } else {
-                author_id = graph->GetNextAuthor(current_year, initial_cartel_author_ids);
-                this->UpdateGraphAttributesAuthors(graph, new_node, author_id);
-            }
-
-            double new_node_non_random_draw = non_random_generator_uniform_distribution(generator);
-            // if author part of cartel, pick randomly from cartel list
-            if (graph->GetCartelID(author_id) > 0) {
-                std::vector<int> cartel_generator_nodes = this->GetCartelGeneratorNodes(graph, author_id);
-                std::vector<int> generator_nodes = this->GetGeneratorNodesFromSet(cartel_generator_nodes);
-                this->UpdateGraphAttributesGeneratorNodes(graph, new_node, generator_nodes);
-            } else if (new_node_non_random_draw < this->non_random_generator_probability) {
-                std::vector<int> generator_nodes = this->GetGeneratorNodesFromSet(eligible_generator_nodes);
-                this->UpdateGraphAttributesGeneratorNodes(graph, new_node, generator_nodes);
-            } else {
-                std::vector<int> generator_nodes = this->GetGeneratorNodes(graph, reverse_continuous_node_mapping);
-                this->UpdateGraphAttributesGeneratorNodes(graph, new_node, generator_nodes);
-            }
-        }
-        this->LogTime(current_year, "Pick generator nodes");
-
-        this->FillAuthorReputationArr(graph, continuous_node_mapping, author_reputation_arr);
-        this->LogTime(current_year, "Fill author reputation array");
-        this->CalculateExpScores(exp_cached_results, author_reputation_arr, ar_arr, current_graph_size);
-        this->LogTime(current_year, "Process author reputation array");
-
-        std::vector<int> sampled_neighborhood_sizes_map(new_nodes_vec.size());
-        std::vector<int> fully_random_citations_map(new_nodes_vec.size());
-        std::vector<std::vector<int>> sampled_binned_neighborhood_sizes_map(new_nodes_vec.size());
-
-        std::vector<std::pair<std::string, int>> parallel_stage_time_vec;
-        #pragma omp parallel for reduction(custom_merge_vec_int: new_edges_vec) reduction(merge_str_int_pair_vecs: parallel_stage_time_vec)
-        for(size_t i = 0; i < new_nodes_vec.size(); i ++) {
-            std::chrono::time_point<std::chrono::steady_clock> local_prev_time = std::chrono::steady_clock::now();
-            std::vector<std::pair<int, int>> local_new_edges_vec;
-            std::vector<std::pair<std::string, int>> local_parallel_stage_time_vec;
-
-
-            int citations[this->max_out_degree + 1]; // out-degree assumed to be max 249 for now
-            int new_node = new_nodes_vec[i];
-            // continuous_node_mapping = node id -> 0..n but guaranteed 0 .. initial graph size are seed nodes
-            // initial graphsize .. n are agent nodes
-            int weight_arr_index = continuous_node_mapping[new_node] - initial_graph_size;
-            double pa_weight = pa_weight_arr[weight_arr_index];
-            double fit_weight = fit_weight_arr[weight_arr_index];
-            double num_authors_weight = num_authors_weight_arr[weight_arr_index];
-            double author_reputation_weight = author_reputation_weight_arr[weight_arr_index];
-            double alpha = alpha_arr[weight_arr_index];
-            int author_id = graph->GetIntAttribute("author_id", new_node);
-            std::vector<int> generator_nodes = this->GetGraphAttributesGeneratorNodes(graph, new_node);
-            int num_hops = 2;
-            // if use alpha then map has keys 1 and 2
-            // if use alpha false then map has only key 1
-            std::unordered_map<int, std::vector<int>> n_hop_map = this->GetNeighborhoodMap(graph, current_year, generator_nodes, num_hops);
-
-            int num_cartel_citations_limit = std::round(this->cartel_outdegree_proportion * out_degree_arr[weight_arr_index]);
-            int num_fully_random_cited_reserved = std::floor(this->fully_random_citations * out_degree_arr[weight_arr_index]); // e.g., 5% of out-degree. some small number
-            int remaining_citation_quota = out_degree_arr[weight_arr_index];
-            remaining_citation_quota -= generator_nodes.size(); // should be 1 and always decremented
-            remaining_citation_quota -= same_year_source_nodes.count(i); // could be 0 or 1
-            int current_cartel_size = 0;
-            if (graph->GetCartelID(author_id) > 0) {
-                current_cartel_size = graph->GetCartelAuthors(graph->GetCartelID(author_id)).size() - 1; // -1 since we cite others only
-            }
-            int num_cartel_citations = std::min(num_cartel_citations_limit, current_cartel_size);
-            remaining_citation_quota -= num_cartel_citations;
-
-            if(remaining_citation_quota > num_fully_random_cited_reserved) {
-                remaining_citation_quota -= num_fully_random_cited_reserved;
-            } else {
-                num_fully_random_cited_reserved = 0;
-            }
-
-            int num_actually_cited = 0;
-            if (same_year_source_nodes.count(i)) {
-                num_actually_cited += this->MakeSameYearCitations(same_year_source_nodes, new_nodes_vec.size(), reverse_continuous_node_mapping, citations, current_graph_size);
-            }
-            local_prev_time = this->LocalLogTime(local_parallel_stage_time_vec, local_prev_time, "make same year citations");
-
-            num_actually_cited += this->MakeCartelCitations(graph, generator_nodes, author_id, continuous_node_mapping, n_hop_map, citations + num_actually_cited, num_cartel_citations, current_year, binned_recency_probabilities, pa_arr, fit_arr, na_arr, ar_arr, pa_weight, fit_weight, num_authors_weight, author_reputation_weight, current_graph_size);
-            // remove cartel cited nodes from n_hop_map
-            std::set<int> cited_elements(citations, citations + num_actually_cited);
-            std::unordered_map<int, std::vector<int>> filtered_n_hop_map;
-            for(auto const& [distance, node_vec] : n_hop_map) {
-                filtered_n_hop_map[distance].reserve(this->neighborhood_sample);
-                for(auto const& node_id : node_vec) {
-                    if (!cited_elements.contains(node_id)) {
-                        filtered_n_hop_map[distance].push_back(node_id);
-                    }
-                }
-            }
-            n_hop_map = filtered_n_hop_map;
-            if (remaining_citation_quota > 0) {
-                std::unordered_map<int, int> num_citations_per_neighborhood = this->GetNumCitationsPerNeighborhood(alpha, remaining_citation_quota, n_hop_map);
-                for(size_t current_neighborhood_index = 1; current_neighborhood_index < n_hop_map.size() + 1; current_neighborhood_index ++) { // 2 iter if use alpha true
-                    sampled_neighborhood_sizes_map[i] += n_hop_map.at(current_neighborhood_index).size();
-                    std::unordered_map<int, std::vector<int>> binned_neighborhood = this->BinNeighborhood(graph, current_year, n_hop_map.at(current_neighborhood_index));
-                    local_prev_time = this->LocalLogTime(local_parallel_stage_time_vec, local_prev_time, "bin neighborhood");
-
-                    std::unordered_map<int, int> outdegree_per_bin_map = this->BinOutdegrees(binned_neighborhood, num_citations_per_neighborhood.at(current_neighborhood_index), binned_recency_probabilities);
-                    for(int bin_index = 0; bin_index < this->num_bins - 1; bin_index ++) { // if there's only 1 bin then this is always false
-                        num_actually_cited += this->MakeCitations(graph, continuous_node_mapping, current_year, binned_neighborhood[bin_index], citations + num_actually_cited, pa_arr, fit_arr, na_arr, ar_arr, pa_weight, fit_weight, num_authors_weight, author_reputation_weight, current_graph_size, outdegree_per_bin_map[bin_index]);
-                    }
-                    num_actually_cited += this->MakeUniformRandomCitations(graph, continuous_node_mapping, current_year, binned_neighborhood[this->num_bins - 1], citations + num_actually_cited, current_graph_size, outdegree_per_bin_map[this->num_bins - 1]);
-                }
-            }
-            for(int j = 0; j < num_actually_cited; j ++) {
-                if (citations[j] < 0) {
-                    std::cerr << "[checking before uniform random to graph] regular citation negative: " << std::to_string(citations[j]) << std::endl;
-                }
-            }
-
-            local_prev_time = this->LocalLogTime(local_parallel_stage_time_vec, local_prev_time, "make neighborhood citations");
-
-            int num_fully_random_cited = out_degree_arr[weight_arr_index] - num_actually_cited - generator_nodes.size(); // finalized later
-            fully_random_citations_map[i] = num_fully_random_cited;
-            num_actually_cited += this->MakeUniformRandomCitationsFromGraph(graph, reverse_continuous_node_mapping, generator_nodes, citations, num_actually_cited, num_fully_random_cited);
-            local_prev_time = this->LocalLogTime(local_parallel_stage_time_vec, local_prev_time, "make random citations");
-
-            for(size_t j = 0; j < generator_nodes.size(); j ++) {
-                if (generator_nodes[j] < 0) {
-                    std::cerr << "generator node negative: " << std::to_string(generator_nodes[j]) << std::endl;
-                }
-                local_new_edges_vec.push_back({new_node, generator_nodes[j]});
-            }
-            for(int j = 0; j < num_actually_cited; j ++) {
-                if (citations[j] < 0) {
-                    std::cerr << "regular citation negative: " << std::to_string(citations[j])  << " at index " << std::to_string(j) << std::endl;
-                    std::cerr << "num_actually_cited: " << std::to_string(num_actually_cited) << std::endl;
-                }
-                local_new_edges_vec.push_back({new_node, citations[j]});
-            }
-            new_edges_vec.insert(new_edges_vec.end(), local_new_edges_vec.begin(), local_new_edges_vec.end());
-            local_prev_time = this->LocalLogTime(local_parallel_stage_time_vec, local_prev_time, "record edges");
-            parallel_stage_time_vec.insert(parallel_stage_time_vec.end(), local_parallel_stage_time_vec.begin(), local_parallel_stage_time_vec.end());
-        } // end of omp parallel loop
-        std::map<std::string, int> per_stage_time_map;
-        for(size_t i = 0; i < parallel_stage_time_vec.size(); i ++) {
-            per_stage_time_map[parallel_stage_time_vec[i].first] +=  parallel_stage_time_vec[i].second;
-        }
-        this->LogTime(current_year, "find neighborhood", per_stage_time_map["retrieve neighborhood"]);
-        this->LogTime(current_year, "bin neighborhood", per_stage_time_map["bin neighborhood"]);
-        this->LogTime(current_year, "make same year citations", per_stage_time_map["make same year citations"]);
-        this->LogTime(current_year, "make neighborhood citations", per_stage_time_map["make neighborhood citations"]);
-        this->LogTime(current_year, "make random citations", per_stage_time_map["make random citations"]);
-        this->LogTime(current_year, "record edges", per_stage_time_map["record edges"]);
-        for(size_t i = 0; i < new_edges_vec.size(); i ++) {
-            int new_node = new_edges_vec[i].first;
-            int destination_id = new_edges_vec[i].second;
-            graph->AddEdge({new_node, destination_id});
-            if (new_node < 0 || destination_id < 0) {
-                std::cerr << "making edge" << std::to_string(new_node) << " -> " << std::to_string(destination_id) << std::endl;
-            }
-        }
-        this->LogTime(current_year, "Add edges to graph");
-
-        for(size_t i = 0; i < new_nodes_vec.size(); i ++) {
-            int new_node = new_nodes_vec[i];
-            graph->SetIntAttribute("sampled_neighborhood_size", new_node, sampled_neighborhood_sizes_map[i]);
-            graph->SetIntAttribute("fully_random_citations", new_node, fully_random_citations_map[i]);
-        }
-
-        this->LogTime(current_year, "Update graph attributes (neighborhood sizes)");
-        this->UpdateGraphAttributesFitnesses(graph, new_nodes_vec, continuous_node_mapping, fitness_lag_duration_arr, fitness_peak_value_arr, fitness_peak_duration_arr, initial_graph_size);
-        this->LogTime(current_year, "Assign fitness values to new nodes");
-        graph->ComputeAuthorReputations();
-        this->UpdateGraphAttributesInitialAuthorReputations(graph, new_nodes_vec);
-        new_nodes_vec.clear();
-        new_edges_vec.clear();
-        same_year_source_nodes.clear();
-    }
-
-    this->WriteToLogFile("finished sim", Log::info);
-    graph->WriteGraph(this->output_file);
-    this->WriteToLogFile("wrote graph", Log::info);
-
-    this->UpdateGraphAttributesWeights(graph, initial_next_node_id, pa_weight_arr, fit_weight_arr, num_authors_weight_arr, author_reputation_weight_arr, final_graph_size - initial_graph_size);
-    this->WriteToLogFile("updated weights", Log::info);
-    this->UpdateGraphAttributesOutDegrees(graph, initial_next_node_id, out_degree_arr, final_graph_size - initial_graph_size);
-    this->WriteToLogFile("updated out-degrees", Log::info);
-    this->UpdateGraphAttributesAlphas(graph, initial_next_node_id, alpha_arr, final_graph_size - initial_graph_size);
-    this->WriteToLogFile("updated alphas", Log::info);
-    this->UpdateGraphAttributesNumAuthors(graph, continuous_node_mapping, num_authors_arr);
-    this->WriteToLogFile("updated num authors", Log::info);
-    this->UpdateGraphAttributesPlantedNodesLineNumbers(graph, initial_next_node_id, planted_nodes_line_number_map);
-    this->WriteToLogFile("updated planted nodes line numbers", Log::info);
-
-    for(auto const& node_id : graph->GetNodeSet()) {
-        graph->SetIntAttribute("in_degree", node_id, graph->GetInDegree(node_id));
-        graph->SetIntAttribute("out_degree", node_id, graph->GetOutDegree(node_id));
-    }
-    this->WriteToLogFile("computed in-degree and out-degrees", Log::info);
-    graph->ComputeAuthorReputations();
-    this->WriteToLogFile("computed author reputations", Log::info);
-    graph->WriteAttributes(this->auxiliary_information_file);
-    this->WriteToLogFile("wrote nodelist", Log::info);
-    delete[] in_degree_arr;
-    delete[] fitness_arr;
-    delete[] num_authors_arr;
-    delete[] author_reputation_arr;
-    delete[] pa_arr;
-    delete[] fit_arr;
-    delete[] na_arr;
-    delete[] ar_arr;
-    delete[] pa_weight_arr;
-    delete[] fit_weight_arr;
-    delete[] num_authors_weight_arr;
-    delete[] author_reputation_weight_arr;
-    delete[] planted_author_id_arr;
-    delete[] out_degree_arr;
-    delete[] random_weight_arr;
-    delete[] current_score_arr;
-    delete[] alpha_arr;
-    delete[] fitness_lag_duration_arr;
-    delete[] fitness_peak_value_arr;
-    delete[] fitness_peak_duration_arr;
-
-    delete graph;
-    return 0;
+  delete this->graph;
+  return 0;
 }
