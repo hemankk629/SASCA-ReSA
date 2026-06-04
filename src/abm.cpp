@@ -1,7 +1,7 @@
 #include "abm.h"
 #include "metrics_engine.h"
 #include "utils.h"
-#include <format>
+#include <algorithm>
 #include <iomanip>
 #include <span>
 #pragma omp declare reduction(                                                 \
@@ -44,9 +44,9 @@ std::unordered_map<int, int> ABM::BuildContinuousNodeMapping(Graph *graph) {
   return this->continuous_node_mapping;
 }
 
-std::unordered_map<int, int>
-ABM::ReverseMapping(std::unordered_map<int, int> mapping) {
-  std::unordered_map<int, int> reverse_mapping;
+std::vector<int>
+ABM::ReverseMapping(const std::unordered_map<int, int> &mapping) {
+  std::vector<int> reverse_mapping(mapping.size());
   for (auto const &[key, val] : mapping) {
     reverse_mapping[val] = key;
   }
@@ -142,7 +142,7 @@ int ABM::GetMaxYear(Graph *graph) {
   int max_year = -1;
   bool is_first = true;
   for (auto const &node : this->graph->GetNodeSet()) {
-    int current_node_year = this->graph->GetIntAttribute("year", node);
+    int current_node_year = this->graph->GetYear(node);
     if (is_first) {
       max_year = current_node_year;
       is_first = false;
@@ -185,14 +185,12 @@ void ABM::UpdateGraphAttributesWeights(
     std::span<double> author_reputation_weight_span, int len) {
   for (int i = 0; i < len; i++) {
     int current_node_id = this->next_node_id + i;
-    this->graph->SetDoubleAttribute("pa_weight", current_node_id,
-                                    this->pa_weight_vec[i]);
-    this->graph->SetDoubleAttribute("fit_weight", current_node_id,
-                                    this->fit_weight_vec[i]);
-    this->graph->SetDoubleAttribute("num_authors_weight", current_node_id,
-                                    this->num_authors_weight_vec[i]);
-    this->graph->SetDoubleAttribute("author_reputation_weight", current_node_id,
-                                    this->author_reputation_weight_vec[i]);
+    this->graph->SetPaWeight(current_node_id, this->pa_weight_vec[i]);
+    this->graph->SetFitWeight(current_node_id, this->fit_weight_vec[i]);
+    this->graph->SetNumAuthorsWeight(current_node_id,
+                                     this->num_authors_weight_vec[i]);
+    this->graph->SetAuthorReputationWeight(
+        current_node_id, this->author_reputation_weight_vec[i]);
   }
 }
 
@@ -201,8 +199,7 @@ void ABM::UpdateGraphAttributesNumAuthors(
     std::span<int> num_authors_span) {
   for (auto const &node_id : this->graph->GetNodeSet()) {
     int continuous_id = this->continuous_node_mapping.at(node_id);
-    this->graph->SetIntAttribute("num_authors", node_id,
-                                 this->num_authors_vec[continuous_id]);
+    this->graph->SetNumAuthors(node_id, this->num_authors_vec[continuous_id]);
   }
 }
 
@@ -212,8 +209,8 @@ void ABM::UpdateGraphAttributesInitialAuthorReputations(
     int current_node_id = new_nodes_vec.at(i);
     int current_author_reputation =
         this->graph->GetAuthorReputationForNode(current_node_id);
-    this->graph->SetIntAttribute("initial_author_reputation", current_node_id,
-                                 current_author_reputation);
+    this->graph->SetInitialAuthorReputation(current_node_id,
+                                            current_author_reputation);
   }
 }
 
@@ -228,14 +225,14 @@ void ABM::UpdateGraphAttributesFitnesses(
     int current_weight_span_index =
         this->continuous_node_mapping.at(current_node_id) -
         this->initial_graph_size;
-    this->graph->SetIntAttribute(
-        "fitness_lag_duration", current_node_id,
+    this->graph->SetFitnessLagDuration(
+        current_node_id,
         this->fitness_lag_duration_vec[current_weight_span_index]);
-    this->graph->SetIntAttribute(
-        "fitness_peak_value", current_node_id,
+    this->graph->SetFitnessPeakValue(
+        current_node_id,
         this->fitness_peak_value_vec[current_weight_span_index]);
-    this->graph->SetIntAttribute(
-        "fitness_peak_duration", current_node_id,
+    this->graph->SetFitnessPeakDuration(
+        current_node_id,
         this->fitness_peak_duration_vec[current_weight_span_index]);
   }
 }
@@ -246,8 +243,7 @@ void ABM::UpdateGraphAttributesPlantedNodesLineNumbers(
   for (auto const &[weight_span_index, line_no] :
        this->planted_nodes_line_number_map) {
     int current_node_id = this->next_node_id + weight_span_index;
-    this->graph->SetIntAttribute("planted_nodes_line_number", current_node_id,
-                                 line_no);
+    this->graph->SetPlantedNodesLineNumber(current_node_id, line_no);
   }
 }
 
@@ -255,8 +251,7 @@ void ABM::UpdateGraphAttributesAlphas(Graph *graph, int next_node_id,
                                       std::span<double> alpha_span, int len) {
   for (int i = 0; i < len; i++) {
     int current_node_id = this->next_node_id + i;
-    this->graph->SetDoubleAttribute("alpha", current_node_id,
-                                    this->alpha_vec[i]);
+    this->graph->SetAlpha(current_node_id, this->alpha_vec[i]);
   }
 }
 
@@ -265,16 +260,15 @@ void ABM::UpdateGraphAttributesOutDegrees(Graph *graph, int next_node_id,
                                           int len) {
   for (int i = 0; i < len; i++) {
     int current_node_id = this->next_node_id + i;
-    this->graph->SetIntAttribute("assigned_out_degree", current_node_id,
-                                 this->out_degree_vec[i]);
+    this->graph->SetAssignedOutDegree(current_node_id, this->out_degree_vec[i]);
   }
 }
 
 std::vector<int> ABM::GetGraphAttributesGeneratorNodes(Graph *graph,
                                                        int new_node) const {
   std::vector<int> generator_nodes;
-  std::string generator_node_string =
-      this->graph->GetStringAttribute("generator_node_string", new_node);
+  const std::string &generator_node_string =
+      this->graph->GetGeneratorNodeString(new_node);
   std::stringstream ss(generator_node_string);
   std::string current_value;
   while (std::getline(ss, current_value, ';')) {
@@ -285,26 +279,30 @@ std::vector<int> ABM::GetGraphAttributesGeneratorNodes(Graph *graph,
 
 void ABM::UpdateGraphAttributesAuthors(Graph *graph, int new_node,
                                        int author_id) {
-  this->graph->SetIntAttribute("author_id", new_node, author_id);
+  this->graph->SetAuthorId(new_node, author_id);
   this->graph->UpdateAuthorPublicationMap(author_id, new_node);
 }
 
 void ABM::UpdateGraphAttributesGeneratorNodes(
     Graph *graph, int new_node, const std::vector<int> &generator_nodes) {
   std::string generator_node_string;
-  generator_node_string += std::to_string(generator_nodes.at(0));
-  for (size_t i = 1; i < generator_nodes.size(); i++) {
-    generator_node_string += ";";
-    generator_node_string += std::to_string(generator_nodes.at(i));
+  if (!generator_nodes.empty()) {
+    generator_node_string += std::to_string(generator_nodes.at(0));
+    for (size_t i = 1; i < generator_nodes.size(); i++) {
+      generator_node_string += ";";
+      generator_node_string += std::to_string(generator_nodes.at(i));
+    }
   }
-  this->graph->SetStringAttribute("generator_node_string", new_node,
-                                  generator_node_string);
+  this->graph->SetGeneratorNodeString(new_node, generator_node_string);
 }
 
 void ABM::FillSameYearSourceNodes(std::set<int> &same_year_source_nodes,
                                   int current_year_new_nodes) {
   size_t num_same_year_source_nodes =
       (size_t)std::floor(current_year_new_nodes * this->same_year_citations);
+  if (num_same_year_source_nodes == 0 || current_year_new_nodes == 0) {
+    return;
+  }
   pcg32 &generator = Utils::GetThreadLocalPRNG();
   std::uniform_int_distribution<int> int_uniform_distribution(
       0, current_year_new_nodes - 1);
@@ -341,7 +339,7 @@ std::vector<int> ABM::GetCartelGeneratorNodes(Graph *graph, int author_id) {
 
 std::vector<int> ABM::GetEligibleGeneratorNodes(
     Graph *graph, int graph_size,
-    const std::unordered_map<int, int> &reverse_continuous_node_mapping,
+    const std::vector<int> &reverse_continuous_node_mapping,
     std::span<int> in_degree_span, std::span<int> fitness_span,
     int in_degree_threshold, int fitness_threshold, int start_year,
     int current_year, int recency_threshold) {
@@ -350,14 +348,13 @@ std::vector<int> ABM::GetEligibleGeneratorNodes(
   std::vector<int> eligible_generator_nodes;
   if (current_year - this->start_year <= recency_threshold) {
     for (int i = graph_size - 1; i >= 0; i--) {
-      int current_node_id = this->reverse_continuous_node_mapping.at(i);
-      if ((current_year - this->graph->GetIntAttribute(
-                              "year", current_node_id)) > recency_threshold) {
+      int current_node_id = this->reverse_continuous_node_mapping[i];
+      if ((current_year - this->graph->GetYear(current_node_id)) >
+          recency_threshold) {
       } else {
         in_degree_eligible_generator_nodes.push_back(
             {this->in_degree_vec[i], current_node_id});
-        if (this->graph->GetStringAttribute("type", current_node_id) ==
-            "seed") {
+        if (this->graph->GetType(current_node_id) == Graph::NodeType::Seed) {
           fitness_eligible_generator_nodes.push_back(
               {this->fitness_value_max, current_node_id});
         } else {
@@ -368,9 +365,9 @@ std::vector<int> ABM::GetEligibleGeneratorNodes(
     }
   } else {
     for (int i = graph_size - 1; i >= 0; i--) {
-      int current_node_id = this->reverse_continuous_node_mapping.at(i);
-      if ((current_year - this->graph->GetIntAttribute(
-                              "year", current_node_id)) > recency_threshold) {
+      int current_node_id = this->reverse_continuous_node_mapping[i];
+      if ((current_year - this->graph->GetYear(current_node_id)) >
+          recency_threshold) {
         break;
       }
       in_degree_eligible_generator_nodes.push_back(
@@ -423,6 +420,9 @@ std::vector<int> ABM::GetEligibleGeneratorNodes(
 std::vector<int>
 ABM::GetGeneratorNodesFromSet(std::vector<int> &eligible_generator_nodes) {
   std::vector<int> generator_nodes;
+  if (eligible_generator_nodes.empty()) {
+    return generator_nodes;
+  }
   std::uniform_int_distribution<int> generator_uniform_distribution{
       0, (int)(eligible_generator_nodes.size() - 1)};
   int num_generator_nodes = 1;
@@ -436,8 +436,7 @@ ABM::GetGeneratorNodesFromSet(std::vector<int> &eligible_generator_nodes) {
 }
 
 std::vector<int> ABM::GetGeneratorNodes(
-    Graph *graph,
-    const std::unordered_map<int, int> &reverse_continuous_node_mapping) {
+    Graph *graph, const std::vector<int> &reverse_continuous_node_mapping) {
   std::vector<int> generator_nodes;
   std::uniform_int_distribution<int> generator_uniform_distribution{
       0, (int)(this->graph->GetNodeSet().size() - 1)};
@@ -446,37 +445,37 @@ std::vector<int> ABM::GetGeneratorNodes(
   for (int i = 0; i < num_generator_nodes; i++) {
     int continuous_generator_node = generator_uniform_distribution(generator);
     int generator_node =
-        this->reverse_continuous_node_mapping.at(continuous_generator_node);
+        this->reverse_continuous_node_mapping[continuous_generator_node];
     generator_nodes.push_back(generator_node);
   }
   return generator_nodes;
 }
 
 bool ABM::ValidateBinBoundaries() {
-  this->logger.WriteToLogFile(std::to_string(this->bin_boundaries.size()) +
+  this->logger.WriteToLogFile(std::to_string(this->neighborhood_search->bin_boundaries.size()) +
                                   " bins have been created",
                               Log::info);
-  if (this->bin_boundaries.size() == 0) {
+  if (this->neighborhood_search->bin_boundaries.size() == 0) {
     this->logger.WriteToLogFile("At least one bin is required", Log::error);
     return false;
   }
-  if (this->bin_boundaries.at(0) != 1) {
+  if (this->neighborhood_search->bin_boundaries.at(0) != 1) {
     this->logger.WriteToLogFile("The first bin must start with year 1",
                                 Log::error);
     return false;
   }
   std::string recency_bin_string;
-  for (size_t i = 0; i < this->bin_boundaries.size() - 1; i++) {
+  for (size_t i = 0; i < this->neighborhood_search->bin_boundaries.size() - 1; i++) {
     recency_bin_string +=
-        ("[" + std::to_string(bin_boundaries.at(i)) + "," +
-         std::to_string(this->bin_boundaries.at(i + 1)) + "), ");
+        ("[" + std::to_string(this->neighborhood_search->bin_boundaries.at(i)) + "," +
+         std::to_string(this->neighborhood_search->bin_boundaries.at(i + 1)) + "), ");
   }
   recency_bin_string += ("[" +
-                         std::to_string(this->bin_boundaries.at(
-                             this->bin_boundaries.size() - 1)) +
+                         std::to_string(this->neighborhood_search->bin_boundaries.at(
+                             this->neighborhood_search->bin_boundaries.size() - 1)) +
                          ",infinity)");
   this->logger.WriteToLogFile(
-      std::format("Here are the bins: {}", recency_bin_string), Log::info);
+      "Here are the bins: " + recency_bin_string, Log::info);
   return true;
 }
 
@@ -507,7 +506,7 @@ bool ABM::ValidateArguments() {
     this->logger.WriteToLogFile("No agents will be planted", Log::info);
   } else {
     this->logger.WriteToLogFile(
-        std::format("planted_nodes: {}", this->planted_nodes), Log::info);
+        "planted_nodes: " + this->planted_nodes, Log::info);
   }
   if (this->clonal_cartel_agent_file == "") {
     this->logger.WriteToLogFile("No clonal cartel agents will be created",
@@ -543,7 +542,7 @@ bool ABM::ValidateArguments() {
     this->logger.WriteToLogFile("fitness_weight: randomized", Log::info);
   } else {
     this->logger.WriteToLogFile(
-        std::format("fitness_weight: {}", this->fitness_weight), Log::info);
+        "fitness_weight: " + std::to_string(this->fitness_weight), Log::info);
   }
   if (this->num_authors_weight == -42) {
     this->logger.WriteToLogFile(
@@ -648,7 +647,7 @@ bool ABM::ValidateArguments() {
     } else if (this->alpha == -1) {
       this->logger.WriteToLogFile("alpha: randomized", Log::info);
     } else {
-      this->logger.WriteToLogFile(std::format("alpha: {}", this->alpha),
+      this->logger.WriteToLogFile("alpha: " + std::to_string(this->alpha),
                                   Log::info);
     }
   } else {
@@ -722,6 +721,7 @@ void ABM::InitializeSimulation() {
   /* get input to score arrays based on this->continuous_node_mapping */
   this->initial_graph_size = this->graph->GetNodeSet().size();
   this->final_graph_size = this->GetFinalGraphSize(this->graph);
+  this->reverse_continuous_node_mapping.resize(this->final_graph_size);
   this->logger.WriteToLogFile("final this->graph size is " +
                                   std::to_string(this->final_graph_size),
                               Log::info);
@@ -794,12 +794,13 @@ void ABM::RunSimulationLoop() {
             " and the this->graph is " + std::to_string(current_graph_size) +
             " nodes large",
         Log::info);
-    MetricsEngine::FillInDegreeSpan(this->graph, this->continuous_node_mapping,
-                                    this->in_degree_vec);
+    MetricsEngine::FillInDegreeSpan(this->graph,
+                                    this->reverse_continuous_node_mapping,
+                                    this->in_degree_vec, current_graph_size);
     this->logger.LogTime(current_year, "Fill in-degree array");
-    MetricsEngine::FillFitnessSpan(this->graph, this->continuous_node_mapping,
-                                   current_year, this->fitness_vec,
-                                   this->fitness_decay_alpha);
+    MetricsEngine::FillFitnessSpan(
+        this->graph, this->reverse_continuous_node_mapping, current_year,
+        this->fitness_vec, this->fitness_decay_alpha, current_graph_size);
     this->logger.LogTime(current_year, "Fill fitness array");
     MetricsEngine::CalculateExpScores(
         exp_cached_results,
@@ -832,8 +833,8 @@ void ABM::RunSimulationLoop() {
       this->reverse_continuous_node_mapping[current_graph_size + i] =
           this->next_node_id;
       new_nodes_vec.push_back(this->next_node_id);
-      this->graph->SetIntAttribute("year", this->next_node_id, current_year);
-      this->graph->SetStringAttribute("type", this->next_node_id, "agent");
+      this->graph->SetYear(this->next_node_id, current_year);
+      this->graph->SetType(this->next_node_id, Graph::NodeType::Agent);
       this->next_node_id++;
     }
     this->logger.LogTime(current_year, "Create new node ids");
@@ -942,9 +943,9 @@ void ABM::RunSimulationLoop() {
     }
     this->logger.LogTime(current_year, "Pick generator nodes");
 
-    MetricsEngine::FillAuthorReputationSpan(this->graph,
-                                            this->continuous_node_mapping,
-                                            this->author_reputation_vec);
+    MetricsEngine::FillAuthorReputationSpan(
+        this->graph, this->reverse_continuous_node_mapping,
+        this->author_reputation_vec, current_graph_size);
     this->logger.LogTime(current_year, "Fill author reputation array");
     MetricsEngine::CalculateExpScores(
         exp_cached_results,
@@ -964,23 +965,51 @@ void ABM::RunSimulationLoop() {
         std::span<double>{this->na_vec.data(), (size_t)current_graph_size},
         std::span<double>{this->ar_vec.data(), (size_t)current_graph_size}};
 
+    int max_threads = omp_get_max_threads();
+    std::vector<std::vector<std::pair<int, int>>> thread_local_new_edges_vec(
+        max_threads);
+    std::vector<std::vector<std::pair<std::string, int>>>
+        thread_local_parallel_stage_time_vec(max_threads);
+    std::vector<std::vector<int>> thread_citations_vec(max_threads);
+    for (int t = 0; t < max_threads; ++t) {
+      thread_local_new_edges_vec[t].reserve(100);
+      thread_local_parallel_stage_time_vec[t].reserve(20);
+      thread_citations_vec[t].resize(this->max_out_degree + 1, 0);
+    }
+
     std::vector<std::pair<std::string, int>> parallel_stage_time_vec;
 #pragma omp parallel for reduction(custom_merge_vec_int : new_edges_vec)       \
     reduction(merge_str_int_pair_vecs : parallel_stage_time_vec)
     for (size_t i = 0; i < new_nodes_vec.size(); i++) {
+      int thread_id = omp_get_thread_num();
       std::chrono::time_point<std::chrono::steady_clock> local_prev_time =
           std::chrono::steady_clock::now();
-      std::vector<std::pair<int, int>> local_new_edges_vec;
-      std::vector<std::pair<std::string, int>> local_parallel_stage_time_vec;
 
-      std::vector<int> citations_vec(this->max_out_degree + 1);
+      auto &local_new_edges_vec = thread_local_new_edges_vec[thread_id];
+      local_new_edges_vec.clear();
+
+      auto &local_parallel_stage_time_vec =
+          thread_local_parallel_stage_time_vec[thread_id];
+      local_parallel_stage_time_vec.clear();
+
+      auto &citations_vec = thread_citations_vec[thread_id];
+      std::fill(citations_vec.begin(), citations_vec.end(), 0);
       std::span<int> citations(citations_vec);
       int new_node = new_nodes_vec[i];
       // this->continuous_node_mapping = node id -> 0..n but guaranteed 0 ..
       // initial this->graph size are seed nodes initial graphsize .. n are
       // agent nodes
-      int weight_span_index =
-          this->continuous_node_mapping[new_node] - this->initial_graph_size;
+      int weight_span_index;
+      try {
+        weight_span_index = this->continuous_node_mapping.at(new_node) - this->initial_graph_size;
+      } catch (const std::out_of_range& e) {
+        #pragma omp critical
+        {
+            fprintf(stderr, "CRASH: continuous_node_mapping missing new_node %d\n", new_node);
+            fflush(stderr);
+        }
+        throw;
+      }
       double pa_weight = this->pa_weight_vec[weight_span_index];
       double fit_weight = this->fit_weight_vec[weight_span_index];
       double num_authors_weight =
@@ -990,7 +1019,7 @@ void ABM::RunSimulationLoop() {
       AgentWeights weights = {pa_weight, fit_weight, num_authors_weight,
                               author_reputation_weight};
       double alpha = this->alpha_vec[weight_span_index];
-      int author_id = this->graph->GetIntAttribute("author_id", new_node);
+      int author_id = this->graph->GetAuthorId(new_node);
       std::vector<int> generator_nodes =
           this->GetGraphAttributesGeneratorNodes(this->graph, new_node);
       int num_hops = 2;
@@ -1066,21 +1095,48 @@ void ABM::RunSimulationLoop() {
         for (size_t current_neighborhood_index = 1;
              current_neighborhood_index < n_hop_map.size() + 1;
              current_neighborhood_index++) { // 2 iter if use alpha true
-          sampled_neighborhood_sizes_map[i] +=
-              n_hop_map.at(current_neighborhood_index).size();
-          std::unordered_map<int, std::vector<int>> binned_neighborhood =
-              this->neighborhood_search->BinNeighborhood(
+          try {
+            sampled_neighborhood_sizes_map[i] +=
+                n_hop_map.at(current_neighborhood_index).size();
+          } catch (...) {
+            #pragma omp critical
+            {
+                fprintf(stderr, "CRASH: n_hop_map missing %d\n", (int)current_neighborhood_index);
+                fflush(stderr);
+            }
+            throw;
+          }
+          std::unordered_map<int, std::vector<int>> binned_neighborhood;
+          try {
+            binned_neighborhood = this->neighborhood_search->BinNeighborhood(
                   this->graph, current_year,
                   n_hop_map.at(current_neighborhood_index));
+          } catch (...) {
+            #pragma omp critical
+            {
+                fprintf(stderr, "CRASH: n_hop_map missing in BinNeighborhood %d\n", (int)current_neighborhood_index);
+                fflush(stderr);
+            }
+            throw;
+          }
           local_prev_time =
               this->logger.LocalLogTime(local_parallel_stage_time_vec,
                                         local_prev_time, "bin neighborhood");
 
-          std::unordered_map<int, int> outdegree_per_bin_map =
-              this->neighborhood_search->BinOutdegrees(
+          std::unordered_map<int, int> outdegree_per_bin_map;
+          try {
+            outdegree_per_bin_map = this->neighborhood_search->BinOutdegrees(
                   binned_neighborhood,
                   num_citations_per_neighborhood.at(current_neighborhood_index),
                   binned_recency_probabilities);
+          } catch (...) {
+            #pragma omp critical
+            {
+                fprintf(stderr, "CRASH: num_citations_per_neighborhood missing %d\n", (int)current_neighborhood_index);
+                fflush(stderr);
+            }
+            throw;
+          }
           for (int bin_index = 0;
                bin_index < this->neighborhood_search->num_bins - 1;
                bin_index++) { // if there's only 1 bin then this is always false
@@ -1180,10 +1236,10 @@ void ABM::RunSimulationLoop() {
 
     for (size_t i = 0; i < new_nodes_vec.size(); i++) {
       int new_node = new_nodes_vec[i];
-      this->graph->SetIntAttribute("sampled_neighborhood_size", new_node,
-                                   sampled_neighborhood_sizes_map[i]);
-      this->graph->SetIntAttribute("fully_random_citations", new_node,
-                                   fully_random_citations_map[i]);
+      this->graph->SetSampledNeighborhoodSize(
+          new_node, sampled_neighborhood_sizes_map[i]);
+      this->graph->SetFullyRandomCitations(new_node,
+                                           fully_random_citations_map[i]);
     }
 
     this->logger.LogTime(current_year,
@@ -1230,10 +1286,8 @@ void ABM::FinalizeSimulation() {
   this->logger.WriteToLogFile("updated planted nodes line numbers", Log::info);
 
   for (auto const &node_id : this->graph->GetNodeSet()) {
-    this->graph->SetIntAttribute("in_degree", node_id,
-                                 this->graph->GetInDegree(node_id));
-    this->graph->SetIntAttribute("out_degree", node_id,
-                                 this->graph->GetOutDegree(node_id));
+    this->graph->SetInDegree(node_id, this->graph->GetInDegree(node_id));
+    this->graph->SetOutDegree(node_id, this->graph->GetOutDegree(node_id));
   }
   this->logger.WriteToLogFile("computed in-degree and out-degrees", Log::info);
   this->graph->ComputeAuthorReputations();

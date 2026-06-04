@@ -59,64 +59,59 @@ void Graph::ParseNodelist() {
       int integer_node =
           std::stoi(current_line[header_to_index_map["node_id"]]);
       int integer_year = std::stoi(current_line[header_to_index_map["year"]]);
-      this->SetIntAttribute("year", integer_node, integer_year);
+      this->SetYear(integer_node, integer_year);
       node_year_vec.push_back({integer_node, integer_year});
       if (this->start_from_checkpoint) {
         std::string type_string = current_line[header_to_index_map["type"]];
-        this->SetStringAttribute("type", integer_node, type_string);
+        this->SetType(integer_node,
+                      type_string == "seed" ? NodeType::Seed : NodeType::Agent);
         double alpha = std::stod(current_line[header_to_index_map["alpha"]]);
-        this->SetDoubleAttribute("alpha", integer_node, alpha);
+        this->SetAlpha(integer_node, alpha);
         double pa_weight =
             std::stod(current_line[header_to_index_map["pa_weight"]]);
-        this->SetDoubleAttribute("pa_weight", integer_node, pa_weight);
+        this->SetPaWeight(integer_node, pa_weight);
         double fit_weight =
             std::stod(current_line[header_to_index_map["fit_weight"]]);
-        this->SetDoubleAttribute("fit_weight", integer_node, fit_weight);
+        this->SetFitWeight(integer_node, fit_weight);
         int fit_lag_duration =
             std::stoi(current_line[header_to_index_map["fit_lag_duration"]]);
-        this->SetIntAttribute("fitness_lag_duration", integer_node,
-                              fit_lag_duration);
+        this->SetFitnessLagDuration(integer_node, fit_lag_duration);
         int fit_peak_value =
             std::stoi(current_line[header_to_index_map["fit_peak_value"]]);
-        this->SetIntAttribute("fitness_peak_value", integer_node,
-                              fit_peak_value);
+        this->SetFitnessPeakValue(integer_node, fit_peak_value);
         int fit_peak_duration =
             std::stoi(current_line[header_to_index_map["fit_peak_duration"]]);
-        this->SetIntAttribute("fitness_peak_duration", integer_node,
-                              fit_peak_duration);
+        this->SetFitnessPeakDuration(integer_node, fit_peak_duration);
         int assigned_out_degree =
             std::stoi(current_line[header_to_index_map["assigned_out_degree"]]);
-        this->SetIntAttribute("assigned_out_degree", integer_node,
-                              assigned_out_degree);
+        this->SetAssignedOutDegree(integer_node, assigned_out_degree);
         int planted_nodes_line_number = std::stoi(
             current_line[header_to_index_map["planted_nodes_line_number"]]);
-        this->SetIntAttribute("planted_nodes_line_number", integer_node,
-                              planted_nodes_line_number);
+        this->SetPlantedNodesLineNumber(integer_node,
+                                        planted_nodes_line_number);
         int sampled_neighborhood_size = std::stoi(
             current_line[header_to_index_map["sampled_neighborhood_size"]]);
-        this->SetIntAttribute("sampled_neighborhood_size", integer_node,
-                              sampled_neighborhood_size);
+        this->SetSampledNeighborhoodSize(integer_node,
+                                         sampled_neighborhood_size);
         std::string generator_node_string =
             current_line[header_to_index_map["generator_node_string"]];
-        this->SetStringAttribute("generator_node_string", integer_node,
-                                 generator_node_string);
+        this->SetGeneratorNodeString(integer_node, generator_node_string);
         int fully_random_citations = std::stoi(
             current_line[header_to_index_map["fully_random_citations"]]);
-        this->SetIntAttribute("fully_random_citations", integer_node,
-                              fully_random_citations);
+        this->SetFullyRandomCitations(integer_node, fully_random_citations);
         int author = std::stoi(current_line[header_to_index_map["author_id"]]);
-        this->SetIntAttribute("author_id", integer_node, author);
+        this->SetAuthorId(integer_node, author);
         int initial_author_reputation = std::stoi(
             current_line[header_to_index_map["initial_author_reputation"]]);
-        this->SetIntAttribute("initial_author_reputation", integer_node,
-                              initial_author_reputation);
+        this->SetInitialAuthorReputation(integer_node,
+                                         initial_author_reputation);
         int num_authors =
             std::stoi(current_line[header_to_index_map["num_authors"]]);
-        this->SetIntAttribute("num_authors", integer_node, num_authors);
+        this->SetNumAuthors(integer_node, num_authors);
         int cartel_id =
             std::stoi(current_line[header_to_index_map["cartel_id"]]);
         if (cartel_id != -1) {
-          this->SetIntAttribute("cartel_id", integer_node, cartel_id);
+          this->SetCartelIdAttr(integer_node, cartel_id);
           this->cartel_set.insert(cartel_id);
           this->SetCartelID(author, cartel_id);
         }
@@ -133,13 +128,10 @@ void Graph::ParseNodelist() {
         int fitness_peak_uniform =
             1000; // MARK: hard coded to be static fitness
         int fitness_power = 1;
-        this->SetStringAttribute("type", integer_node, "seed");
-        this->SetIntAttribute("fitness_lag_duration", integer_node,
-                              fitness_lag_uniform);
-        this->SetIntAttribute("fitness_peak_duration", integer_node,
-                              fitness_peak_uniform);
-        this->SetIntAttribute("fitness_peak_value", integer_node,
-                              fitness_power);
+        this->SetType(integer_node, NodeType::Seed);
+        this->SetFitnessLagDuration(integer_node, fitness_lag_uniform);
+        this->SetFitnessPeakDuration(integer_node, fitness_peak_uniform);
+        this->SetFitnessPeakValue(integer_node, fitness_power);
       }
     }
     line_no++;
@@ -164,15 +156,15 @@ void Graph::ParseNodelist() {
       int current_node_id = node_year_vec[i].first;
       int current_year = node_year_vec[i].second;
       int author_id = this->GetNextAuthor(current_year, std::set<int>());
-      this->SetIntAttribute("author_id", current_node_id, author_id);
+      this->SetAuthorId(current_node_id, author_id);
       this->UpdateAuthorPublicationMap(author_id, current_node_id);
       if (previous_year != current_year) {
         this->ComputeAuthorReputations();
         for (size_t j = previous_index; j < i; j++) {
           int node_id = node_year_vec.at(j).first;
-          int author_id = this->GetIntAttribute("author_id", node_id);
-          this->SetIntAttribute("initial_author_reputation", node_id,
-                                this->author_reputation_map.at(author_id));
+          int author_id = this->GetAuthorId(node_id);
+          this->SetInitialAuthorReputation(
+              node_id, this->author_reputation_map.at(author_id));
         }
         previous_index = i;
         previous_year = node_year_vec.at(previous_index).second;
@@ -182,9 +174,9 @@ void Graph::ParseNodelist() {
       this->ComputeAuthorReputations();
       for (size_t j = previous_index; j < node_year_vec.size(); j++) {
         int node_id = node_year_vec.at(j).first;
-        int author_id = this->GetIntAttribute("author_id", node_id);
-        this->SetIntAttribute("initial_author_reputation", node_id,
-                              this->author_reputation_map.at(author_id));
+        int author_id = this->GetAuthorId(node_id);
+        this->SetInitialAuthorReputation(
+            node_id, this->author_reputation_map.at(author_id));
       }
     }
   }
@@ -205,6 +197,10 @@ std::set<int> Graph::GetCartelAuthors(int cartel_id) const {
 }
 
 std::vector<int> Graph::GetAuthorPublications(int author_id) const {
+  static const std::vector<int> empty_vec;
+  if (!this->author_publication_map.contains(author_id)) {
+    return empty_vec;
+  }
   return this->author_publication_map.at(author_id);
 }
 
@@ -221,6 +217,10 @@ void Graph::UpdateAuthorPublicationMap(int author, int node) {
 
 void Graph::ComputeAuthorReputations() {
   for (const auto &[author_id, birth_year] : this->author_birth_year_map) {
+    if (!this->author_publication_map.contains(author_id)) {
+      std::cerr << "Missing author_id in author_publication_map: " << author_id << "\n";
+      throw std::out_of_range("Missing author_id in author_publication_map");
+    }
     const std::vector<int> &publication_vec =
         this->author_publication_map.at(author_id);
     int h_index = 0;
@@ -246,14 +246,14 @@ void Graph::ComputeAuthorReputations() {
 
 void Graph::SaveInitialAuthorReputations() {
   for (const auto &node_id : this->GetNodeSet()) {
-    int author_id = this->GetIntAttribute("author_id", node_id);
-    this->SetIntAttribute("initial_author_reputation", node_id,
-                          this->author_reputation_map.at(author_id));
+    int author_id = this->GetAuthorId(node_id);
+    this->SetInitialAuthorReputation(node_id,
+                                     this->author_reputation_map.at(author_id));
   }
 }
 
 int Graph::GetAuthorReputationForNode(int node) const {
-  int author_id = this->GetIntAttribute("author_id", node);
+  int author_id = this->GetAuthorId(node);
   return this->author_reputation_map.at(author_id);
 }
 
@@ -289,7 +289,7 @@ void Graph::ReadNumAuthorsBag() {
 
 void Graph::UpdateAuthorManual(int author_id) {
   int num_publications_by_author =
-      this->author_publication_map[author_id].size();
+      this->author_publication_map.contains(author_id) ? this->author_publication_map.at(author_id).size() : 0;
   std::erase(this->publication_count_to_author_map[num_publications_by_author],
              author_id);
   this->publication_count_to_author_map[num_publications_by_author + 1]
@@ -357,166 +357,31 @@ int Graph::GetNextAuthor(int current_year, const std::set<int> &exclusion_set) {
   return return_author;
 }
 
-void Graph::SetIntAttribute(std::string attribute_key, int node,
-                            int attribute_value) {
-  auto &attr = this->node_attributes[node];
-  if (attribute_key == "year")
-    attr.year = attribute_value;
-  else if (attribute_key == "fitness_lag_duration")
-    attr.fitness_lag_duration = attribute_value;
-  else if (attribute_key == "fitness_peak_value")
-    attr.fitness_peak_value = attribute_value;
-  else if (attribute_key == "fitness_peak_duration")
-    attr.fitness_peak_duration = attribute_value;
-  else if (attribute_key == "assigned_out_degree")
-    attr.assigned_out_degree = attribute_value;
-  else if (attribute_key == "planted_nodes_line_number")
-    attr.planted_nodes_line_number = attribute_value;
-  else if (attribute_key == "sampled_neighborhood_size")
-    attr.sampled_neighborhood_size = attribute_value;
-  else if (attribute_key == "fully_random_citations")
-    attr.fully_random_citations = attribute_value;
-  else if (attribute_key == "author_id")
-    attr.author_id = attribute_value;
-  else if (attribute_key == "initial_author_reputation")
-    attr.initial_author_reputation = attribute_value;
-  else if (attribute_key == "num_authors")
-    attr.num_authors = attribute_value;
-  else if (attribute_key == "cartel_id")
-    attr.cartel_id = attribute_value;
-  else if (attribute_key == "in_degree")
-    attr.in_degree = attribute_value;
-  else if (attribute_key == "out_degree")
-    attr.out_degree = attribute_value;
-}
-
-int Graph::GetIntAttribute(std::string attribute_key, int node) const {
-  const auto &attr = this->node_attributes.at(node);
-  if (attribute_key == "year")
-    return attr.year;
-  if (attribute_key == "fitness_lag_duration")
-    return attr.fitness_lag_duration;
-  if (attribute_key == "fitness_peak_value")
-    return attr.fitness_peak_value;
-  if (attribute_key == "fitness_peak_duration")
-    return attr.fitness_peak_duration;
-  if (attribute_key == "assigned_out_degree")
-    return attr.assigned_out_degree;
-  if (attribute_key == "planted_nodes_line_number")
-    return attr.planted_nodes_line_number;
-  if (attribute_key == "sampled_neighborhood_size")
-    return attr.sampled_neighborhood_size;
-  if (attribute_key == "fully_random_citations")
-    return attr.fully_random_citations;
-  if (attribute_key == "author_id")
-    return attr.author_id;
-  if (attribute_key == "initial_author_reputation")
-    return attr.initial_author_reputation;
-  if (attribute_key == "num_authors")
-    return attr.num_authors;
-  if (attribute_key == "cartel_id")
-    return attr.cartel_id;
-  if (attribute_key == "in_degree")
-    return attr.in_degree;
-  if (attribute_key == "out_degree")
-    return attr.out_degree;
-  return -1;
-}
-
-void Graph::SetStringAttribute(std::string attribute_key, int node,
-                               std::string attribute_value) {
-  auto &attr = this->node_attributes[node];
-  if (attribute_key == "generator_node_string")
-    attr.generator_node_string = attribute_value;
-  else if (attribute_key == "type")
-    attr.type = attribute_value;
-}
-
-std::string Graph::GetStringAttribute(std::string attribute_key,
-                                      int node) const {
-  const auto &attr = this->node_attributes.at(node);
-  if (attribute_key == "generator_node_string")
-    return attr.generator_node_string;
-  if (attribute_key == "type")
-    return attr.type;
-  return "";
-}
-
-void Graph::SetDoubleAttribute(std::string attribute_key, int node,
-                               double attribute_value) {
-  auto &attr = this->node_attributes[node];
-  if (attribute_key == "alpha")
-    attr.alpha = attribute_value;
-  else if (attribute_key == "pa_weight")
-    attr.pa_weight = attribute_value;
-  else if (attribute_key == "fit_weight")
-    attr.fit_weight = attribute_value;
-  else if (attribute_key == "num_authors_weight")
-    attr.num_authors_weight = attribute_value;
-  else if (attribute_key == "author_reputation_weight")
-    attr.author_reputation_weight = attribute_value;
-}
-
-double Graph::GetDoubleAttribute(std::string attribute_key, int node) const {
-  const auto &attr = this->node_attributes.at(node);
-  if (attribute_key == "alpha")
-    return attr.alpha;
-  if (attribute_key == "pa_weight")
-    return attr.pa_weight;
-  if (attribute_key == "fit_weight")
-    return attr.fit_weight;
-  if (attribute_key == "num_authors_weight")
-    return attr.num_authors_weight;
-  if (attribute_key == "author_reputation_weight")
-    return attr.author_reputation_weight;
-  return -1.0;
-}
-
-bool Graph::HasIntAttribute(std::string attribute_key, int node) const {
-  if (!this->node_attributes.contains(node))
-    return false;
-  const auto &attr = this->node_attributes.at(node);
-  if (attribute_key == "planted_nodes_line_number")
-    return attr.planted_nodes_line_number != -1;
-  return false;
-}
-
 void Graph::AddEdge(std::pair<int, int> edge) {
-  this->forward_adj_map[edge.first].push_back(edge.second);
-  this->backward_adj_map[edge.second].push_back(edge.first);
+  this->EnsureNodeCapacity(edge.first);
+  this->forward_adj_list[edge.first].push_back(edge.second);
+  this->SetOutDegree(edge.first, this->GetOutDegree(edge.first) + 1);
+  this->EnsureNodeCapacity(edge.second);
+  this->backward_adj_list[edge.second].push_back(edge.first);
+  this->SetInDegree(edge.second, this->GetInDegree(edge.second) + 1);
   this->AddNode(edge.first);
   this->AddNode(edge.second);
-}
-
-int Graph::GetInDegree(int node) const {
-  if (this->backward_adj_map.contains(node)) {
-    return this->backward_adj_map.at(node).size();
-  }
-  return 0;
-}
-
-int Graph::GetOutDegree(int node) const {
-  if (this->forward_adj_map.contains(node)) {
-    return this->forward_adj_map.at(node).size();
-  }
-  return 0;
 }
 
 void Graph::AddNode(int u) { this->node_set.insert(u); }
 
 const std::set<int> &Graph::GetNodeSet() const { return this->node_set; }
-const std::unordered_map<int, std::vector<int>> &
-Graph::GetForwardAdjMap() const {
-  return this->forward_adj_map;
+const std::vector<std::vector<int>> &Graph::GetForwardAdjList() const {
+  return this->forward_adj_list;
 }
 
-const std::unordered_map<int, std::vector<int>> &
-Graph::GetBackwardAdjMap() const {
-  return this->backward_adj_map;
+const std::vector<std::vector<int>> &Graph::GetBackwardAdjList() const {
+  return this->backward_adj_list;
 }
 
 void Graph::PrintGraph() const {
-  for (auto const &[u, u_neighbors] : this->GetForwardAdjMap()) {
+  for (size_t u = 0; u < this->GetForwardAdjList().size(); u++) {
+    const auto &u_neighbors = this->GetForwardAdjList()[u];
     for (const int &v : u_neighbors) {
       /* if (u < v) { */
       std::cout << u << "-" << v << "\n";
@@ -528,7 +393,8 @@ void Graph::PrintGraph() const {
 void Graph::WriteGraph(std::string output_file) const {
   std::ofstream output_filehandle(output_file);
   output_filehandle << "source,target\n";
-  for (auto const &[u, u_neighbors] : this->GetForwardAdjMap()) {
+  for (size_t u = 0; u < this->GetForwardAdjList().size(); u++) {
+    const auto &u_neighbors = this->GetForwardAdjList()[u];
     for (const int &v : u_neighbors) {
       /* if (u < v) { */
       output_filehandle << u << "," << v << "\n";
@@ -548,51 +414,42 @@ void Graph::WriteAttributes(std::string auxiliary_information_file) const {
          "citations,author_id,num_authors,initial_author_reputation,final_"
          "author_reputation,cartel_id\n";
   for (const auto &node_id : this->GetNodeSet()) {
-    std::string node_type = this->GetStringAttribute("type", node_id);
-    int year = this->GetIntAttribute("year", node_id);
+    std::string node_type =
+        (this->GetType(node_id) == NodeType::Seed ? "seed" : "agent");
+    int year = this->GetYear(node_id);
     double pa_weight = -1;
     double fit_weight = -1;
     double num_authors_weight = -1;
     double author_reputation_weight = -1;
     double alpha = -1;
-    int fit_lag_duration =
-        this->GetIntAttribute("fitness_lag_duration", node_id);
-    int fit_peak_value = this->GetIntAttribute("fitness_peak_value", node_id);
-    int fit_peak_duration =
-        this->GetIntAttribute("fitness_peak_duration", node_id);
-    int out_degree = this->GetIntAttribute("out_degree", node_id);
+    int fit_lag_duration = this->GetFitnessLagDuration(node_id);
+    int fit_peak_value = this->GetFitnessPeakValue(node_id);
+    int fit_peak_duration = this->GetFitnessPeakDuration(node_id);
+    int out_degree = this->GetOutDegree(node_id);
     int assigned_out_degree = -1;
-    int in_degree = this->GetIntAttribute("in_degree", node_id);
-    int author = this->GetIntAttribute("author_id", node_id);
-    int num_authors = this->GetIntAttribute("num_authors", node_id);
+    int in_degree = this->GetInDegree(node_id);
+    int author = this->GetAuthorId(node_id);
+    int num_authors = this->GetNumAuthors(node_id);
     int planted_nodes_line_number = -1;
     std::string generator_node_string = "no_generators";
     int neighborhood_size = -1;
     int fully_random_citations = -1;
-    int initial_author_reputation =
-        this->GetIntAttribute("initial_author_reputation", node_id);
+    int initial_author_reputation = this->GetInitialAuthorReputation(node_id);
     int final_author_reputation = this->GetAuthorReputationForNode(node_id);
     int cartel_id = this->GetCartelID(author);
-    if (node_type != "seed") {
-      alpha = this->GetDoubleAttribute("alpha", node_id);
-      pa_weight = this->GetDoubleAttribute("pa_weight", node_id);
-      fit_weight = this->GetDoubleAttribute("fit_weight", node_id);
-      num_authors_weight =
-          this->GetDoubleAttribute("num_authors_weight", node_id);
-      author_reputation_weight =
-          this->GetDoubleAttribute("author_reputation_weight", node_id);
-      assigned_out_degree =
-          this->GetIntAttribute("assigned_out_degree", node_id);
-      generator_node_string =
-          this->GetStringAttribute("generator_node_string", node_id);
-      if (this->HasIntAttribute("planted_nodes_line_number", node_id)) {
-        planted_nodes_line_number =
-            this->GetIntAttribute("planted_nodes_line_number", node_id);
+    if (this->GetType(node_id) != NodeType::Seed) {
+      alpha = this->GetAlpha(node_id);
+      pa_weight = this->GetPaWeight(node_id);
+      fit_weight = this->GetFitWeight(node_id);
+      num_authors_weight = this->GetNumAuthorsWeight(node_id);
+      author_reputation_weight = this->GetAuthorReputationWeight(node_id);
+      assigned_out_degree = this->GetAssignedOutDegree(node_id);
+      generator_node_string = this->GetGeneratorNodeString(node_id);
+      if (this->HasPlantedNodesLineNumber(node_id)) {
+        planted_nodes_line_number = this->GetPlantedNodesLineNumber(node_id);
       }
-      neighborhood_size =
-          this->GetIntAttribute("sampled_neighborhood_size", node_id);
-      fully_random_citations =
-          this->GetIntAttribute("fully_random_citations", node_id);
+      neighborhood_size = this->GetSampledNeighborhoodSize(node_id);
+      fully_random_citations = this->GetFullyRandomCitations(node_id);
     }
     auxiliary_information_filehandle
         << node_id << "," << node_type << "," << year << "," << alpha << ","

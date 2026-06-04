@@ -8,6 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -27,8 +28,8 @@ public:
   Description: Detects the CSV/TSV delimiter (comma, tab, space) by reading the
   first line of the file.
   */
-  static inline char GetDelimiter(std::string filepath) {
-    std::ifstream edgelist(filepath);
+  static inline char GetDelimiter(std::string_view filepath) {
+    std::ifstream edgelist{std::string(filepath)};
     std::string line;
     getline(edgelist, line);
     if (line.find(',') != std::string::npos) {
@@ -38,7 +39,8 @@ public:
     } else if (line.find(' ') != std::string::npos) {
       return ' ';
     }
-    throw std::invalid_argument("Could not detect filetype for " + filepath);
+    throw std::invalid_argument("Could not detect filetype for " +
+                                std::string(filepath));
   }
 
   static inline std::
@@ -49,9 +51,9 @@ public:
       Description: Parses the header of a file and maps the integer column index
       to the string column name.
       */
-      GetIndexToHeaderMap(char delimiter, std::string filepath) {
+      GetIndexToHeaderMap(char delimiter, std::string_view filepath) {
     std::unordered_map<int, std::string> index_to_header_map;
-    std::ifstream input_nodelist(filepath);
+    std::ifstream input_nodelist{std::string(filepath)};
     std::string line;
     std::getline(input_nodelist, line);
     std::stringstream ss(line);
@@ -72,9 +74,9 @@ public:
       Description: Parses the header of a file and maps the string column name
       to its integer column index.
       */
-      GetHeaderToIndexMap(char delimiter, std::string filepath) {
+      GetHeaderToIndexMap(char delimiter, std::string_view filepath) {
     std::unordered_map<std::string, int> header_to_index_map;
-    std::ifstream input_nodelist(filepath);
+    std::ifstream input_nodelist{std::string(filepath)};
     std::string line;
     std::getline(input_nodelist, line);
     std::stringstream ss(line);
@@ -93,20 +95,21 @@ public:
   Description: Parses a JSON or structured configuration file describing the
   intrinsic properties of a planted cartel agent.
   */
-  static ClonalCartelAgent ParseClonalCartelAgentStruct(std::string filepath);
+  static ClonalCartelAgent
+  ParseClonalCartelAgentStruct(std::string_view filepath);
   /*
   Input: std::string filepath
   Output: std::vector<int>
   Description: Parses historical empirical out-degree frequencies into a
   flattened vector for constant-time uniform sampling.
   */
-  static std::vector<int> ParseOutDegreeBag(std::string filepath);
+  static std::vector<int> ParseOutDegreeBag(std::string_view filepath);
   static std::unordered_map<
       int,
       std::unordered_map<int, std::unordered_map<std::string, std::string>>>
-  ParsePlantedNodes(std::string filepath);
+  ParsePlantedNodes(std::string_view filepath);
   static std::unordered_map<int, int>
-  ParseRecencyProbabilities(std::string filepath);
+  ParseRecencyProbabilities(std::string_view filepath);
 };
 
 class SimLogger {

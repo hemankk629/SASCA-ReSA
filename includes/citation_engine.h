@@ -23,7 +23,7 @@ public:
 
   /*
   Input: const std::set<int> &same_year_source_nodes, int num_new_nodes,
-         const std::unordered_map<int, int> &reverse_continuous_node_mapping,
+         const std::vector<int> &reverse_continuous_node_mapping,
          std::span<int> citations, int current_graph_size
   Output: int (number of citations actually made)
   Description: Simulates same-year citations by uniformly selecting among papers
@@ -31,7 +31,7 @@ public:
   */
   int MakeSameYearCitations(
       const std::set<int> &same_year_source_nodes, int num_new_nodes,
-      const std::unordered_map<int, int> &reverse_continuous_node_mapping,
+      const std::vector<int> &reverse_continuous_node_mapping,
       std::span<int> citations, int current_graph_size);
   /*
   Input: Graph *graph, const std::unordered_map<int, int>
@@ -41,8 +41,7 @@ public:
   entire graph's history uniformly, ignoring metrics.
   */
   int MakeUniformRandomCitationsFromGraph(
-      Graph *graph,
-      const std::unordered_map<int, int> &reverse_continuous_node_mapping,
+      Graph *graph, const std::vector<int> &reverse_continuous_node_mapping,
       std::vector<int> &generator_nodes, std::span<int> citations,
       int num_cited_so_far, int num_citations);
   /*

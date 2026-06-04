@@ -199,7 +199,7 @@ int main(int argc, char *argv[]) {
       reader.Get("General", "auxiliary_information_file", "");
   std::string log_file = reader.Get("General", "log_file", "");
   int num_processors = reader.GetInteger("General", "num_processors", -42);
-  int log_level = reader.GetInteger("General", "log_level", -41) - 1;
+  int log_level = reader.GetInteger("General", "log_level", -41);
   SimulationConfig config;
   config.edgelist = edgelist;
   config.nodelist = nodelist;
