@@ -1,0 +1,8 @@
+# SASCA-ReSA Patch Notes
+
+## Refactoring and Optimization (main -> hkohli/refactor)
+
+* **Architectural Decoupling**: Split the monolithic `abm.cpp` file into more focused, maintainable modules including `citation_engine.cpp`, `metrics_engine.cpp`, and `neighborhood_search.cpp`.
+* **Data Structure Enhancements**: Upgraded graph traversal mechanisms by transitioning from adjacency maps to adjacency lists (`GetForwardAdjList` / `GetBackwardAdjList`) for significantly faster graph traversals.
+* **Code Reusability & Formatting**: Formatted the codebase, added extensive documentation across headers, and modernized string handling by moving to `std::string_view` for zero-copy parsing.
+* **Build Configuration**: Updated `CMakeLists.txt` and `.gitignore` to reflect the new modular architecture.
