@@ -431,11 +431,18 @@ int CitationEngine::MakeCitations(
   std::ranges::shuffle(element_index_vec, generator);
   /* std::sort(element_index_vec.begin(), element_index_vec.end(), [](auto&
    * left, auto& right){ */
-  std::partial_sort(element_index_vec.begin(),
-                    element_index_vec.begin() + actual_num_cited,
-                    element_index_vec.end(), [](auto &left, auto &right) {
-                      return left.first > right.first; // read
-                    });
+  if ((size_t)actual_num_cited == candidate_nodes.size()) {
+    std::sort(element_index_vec.begin(), element_index_vec.end(),
+              [](auto &left, auto &right) {
+                return left.first > right.first; // read
+              });
+  } else {
+    std::partial_sort(element_index_vec.begin(),
+                      element_index_vec.begin() + actual_num_cited,
+                      element_index_vec.end(), [](auto &left, auto &right) {
+                        return left.first > right.first; // read
+                      });
+  }
   for (int i = 0; i < actual_num_cited; i++) {
     citations[i] = element_index_vec[i].second;
   }
