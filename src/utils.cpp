@@ -77,7 +77,15 @@ std::vector<int> Utils::ParseOutDegreeBag(std::string filepath) {
       break;
     }
     if (line_no != 0) {
-      vec.push_back(std::stoi(current_line[1]));
+      int current_out_degree = std::stoi(current_line[1]);
+      if (current_out_degree > 1500) {
+        std::cerr
+            << "Maximum out-degrree defined in the header file is less than "
+               "the out-degree read from the input out-degree bag. Aborting."
+            << std::endl;
+        exit(1);
+      }
+      vec.push_back(current_out_degree);
     }
     line_no++;
   }
