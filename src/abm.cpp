@@ -286,14 +286,17 @@ void ABM::UpdateGraphAttributesAuthors(Graph *graph, int new_node,
 void ABM::UpdateGraphAttributesGeneratorNodes(
     Graph *graph, int new_node, const std::vector<int> &generator_nodes) {
   std::string generator_node_string;
+  int inherited_cluster_id = -1;
   if (!generator_nodes.empty()) {
     generator_node_string += std::to_string(generator_nodes.at(0));
+    inherited_cluster_id = this->graph->GetCommunityAssignment(generator_nodes.at(0));
     for (size_t i = 1; i < generator_nodes.size(); i++) {
       generator_node_string += ";";
       generator_node_string += std::to_string(generator_nodes.at(i));
     }
   }
   this->graph->SetGeneratorNodeString(new_node, generator_node_string);
+  this->graph->SetCommunityAssignment(new_node, inherited_cluster_id);
 }
 
 void ABM::FillSameYearSourceNodes(std::set<int> &same_year_source_nodes,
@@ -706,6 +709,7 @@ void ABM::InitializeSimulation() {
       new Graph(this->edgelist, this->nodelist, this->start_from_checkpoint,
                 this->num_authors_bag, this->author_max_lifetime);
   this->InitializeSeedFitness(this->graph);
+  this->ReadCommunityAssignment();
   this->logger.WriteToLogFile("loaded this->graph", Log::info);
   /* node ids to continous integer from 0 */
   this->continuous_node_mapping = this->BuildContinuousNodeMapping(this->graph);
@@ -1308,4 +1312,70 @@ int ABM::main() {
 
   delete this->graph;
   return 0;
+}
+
+void ABM::ReadCommunityAssignment() {
+  if (this->community_assignment.empty()) {
+    return;
+  }
+
+  this->logger.WriteToLogFile("Attempting to read community assignment file: " + this->community_assignment, Log::info);
+  std::ifstream file(this->community_assignment);
+  if (!file.is_open()) {
+    this->logger.WriteToLogFile("Error: Could not open community assignment file " + this->community_assignment, Log::error);
+    throw std::runtime_error("Could not open community assignment file");
+  }
+
+  char delimiter = Utils::GetDelimiter(this->community_assignment);
+  auto header_map = Utils::GetHeaderToIndexMap(delimiter, this->community_assignment);
+
+  if (!header_map.contains("node_id")) {
+    this->logger.WriteToLogFile("Error: Community assignment file must have 'node_id' column", Log::error);
+    throw std::runtime_error("Invalid community assignment file schema");
+  }
+  
+  int cluster_id_idx = -1;
+  if (header_map.contains("cluster_id")) {
+    cluster_id_idx = header_map["cluster_id"];
+  } else if (header_map.contains("comm_id")) {
+    cluster_id_idx = header_map["comm_id"];
+  } else {
+    this->logger.WriteToLogFile("Error: Community assignment file must have 'cluster_id' or 'comm_id' column", Log::error);
+    throw std::runtime_error("Invalid community assignment file schema");
+  }
+
+  int node_id_idx = header_map["node_id"];
+
+  std::string line;
+  int line_no = 0;
+
+  // Need to read the file again since GetDelimiter / GetHeaderToIndexMap open and close it internally
+  std::ifstream data_file(this->community_assignment);
+  while (std::getline(data_file, line)) {
+    if (line_no == 0) {
+      line_no++;
+      continue;
+    }
+    std::stringstream ss(line);
+    std::string current_value;
+    std::vector<std::string> current_line;
+    while (std::getline(ss, current_value, delimiter)) {
+      current_line.push_back(current_value);
+    }
+    if (current_line.empty()) {
+      break;
+    }
+    
+    // Some lines might be malformed
+    if (current_line.size() <= (size_t)std::max(node_id_idx, cluster_id_idx)) {
+      continue;
+    }
+
+    int node_id = std::stoi(current_line[node_id_idx]);
+    int cluster_id = std::stoi(current_line[cluster_id_idx]);
+
+    this->graph->SetCommunityAssignment(node_id, cluster_id);
+    line_no++;
+  }
+  this->logger.WriteToLogFile("Successfully read community assignment file and assigned clusters to " + std::to_string(line_no - 1) + " nodes.", Log::info);
 }

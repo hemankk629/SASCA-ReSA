@@ -218,7 +218,8 @@ void Graph::UpdateAuthorPublicationMap(int author, int node) {
 void Graph::ComputeAuthorReputations() {
   for (const auto &[author_id, birth_year] : this->author_birth_year_map) {
     if (!this->author_publication_map.contains(author_id)) {
-      std::cerr << "Missing author_id in author_publication_map: " << author_id << "\n";
+      std::cerr << "Missing author_id in author_publication_map: " << author_id
+                << "\n";
       throw std::out_of_range("Missing author_id in author_publication_map");
     }
     const std::vector<int> &publication_vec =
@@ -289,7 +290,9 @@ void Graph::ReadNumAuthorsBag() {
 
 void Graph::UpdateAuthorManual(int author_id) {
   int num_publications_by_author =
-      this->author_publication_map.contains(author_id) ? this->author_publication_map.at(author_id).size() : 0;
+      this->author_publication_map.contains(author_id)
+          ? this->author_publication_map.at(author_id).size()
+          : 0;
   std::erase(this->publication_count_to_author_map[num_publications_by_author],
              author_id);
   this->publication_count_to_author_map[num_publications_by_author + 1]
@@ -412,7 +415,7 @@ void Graph::WriteAttributes(std::string auxiliary_information_file) const {
          "duration,in_degree,out_degree,assigned_out_degree,planted_nodes_line_"
          "number,generator_node_string,sampled_neighborhood_size,fully_random_"
          "citations,author_id,num_authors,initial_author_reputation,final_"
-         "author_reputation,cartel_id\n";
+         "author_reputation,cartel_id,cluster_id\n";
   for (const auto &node_id : this->GetNodeSet()) {
     std::string node_type =
         (this->GetType(node_id) == NodeType::Seed ? "seed" : "agent");
@@ -437,6 +440,7 @@ void Graph::WriteAttributes(std::string auxiliary_information_file) const {
     int initial_author_reputation = this->GetInitialAuthorReputation(node_id);
     int final_author_reputation = this->GetAuthorReputationForNode(node_id);
     int cartel_id = this->GetCartelID(author);
+    int cluster_id = this->GetCommunityAssignment(node_id);
     if (this->GetType(node_id) != NodeType::Seed) {
       alpha = this->GetAlpha(node_id);
       pa_weight = this->GetPaWeight(node_id);
@@ -460,7 +464,8 @@ void Graph::WriteAttributes(std::string auxiliary_information_file) const {
         << planted_nodes_line_number << "," << generator_node_string << ","
         << neighborhood_size << "," << fully_random_citations << "," << author
         << "," << num_authors << "," << initial_author_reputation << ","
-        << final_author_reputation << "," << cartel_id << "\n";
+        << final_author_reputation << "," << cartel_id << "," << cluster_id
+        << "\n";
   }
   auxiliary_information_filehandle.close();
 }

@@ -41,6 +41,7 @@ public:
     NodeType type = NodeType::None;
     int in_degree = 0;
     int out_degree = 0;
+    int cluster_id = -1;
   };
   /*
   Input: std::string edgelist, std::string nodelist, bool start_from_checkpoint,
@@ -254,6 +255,14 @@ public:
   inline void SetGeneratorNodeString(int node, const std::string &val) {
     EnsureNodeCapacity(node);
     node_attributes[node].generator_node_string = val;
+  }
+
+  inline int GetCommunityAssignment(int node) const {
+    return node_attributes[node].cluster_id;
+  }
+  inline void SetCommunityAssignment(int node, int val) {
+    EnsureNodeCapacity(node);
+    node_attributes[node].cluster_id = val;
   }
 
   inline int GetFullyRandomCitations(int node) const {

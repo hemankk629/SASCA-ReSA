@@ -109,6 +109,8 @@ int main(int argc, char *argv[]) {
   std::string out_degree_bag = reader.Get("Environment", "out_degree_bag", "");
   std::string recency_table = reader.Get("Environment", "recency_table", "");
   std::string planted_nodes = reader.Get("Environment", "planted_nodes", "");
+  std::string community_assignment =
+      reader.Get("Environment", "community_assignment", "");
   double growth_rate = reader.GetReal("Environment", "growth_rate", -42);
   int num_cycles = reader.GetInteger("Environment", "num_cycles", -42);
   double fully_random_citations =
@@ -211,6 +213,7 @@ int main(int argc, char *argv[]) {
   config.use_alpha = use_alpha;
   config.start_from_checkpoint = start_from_checkpoint;
   config.planted_nodes = planted_nodes;
+  config.community_assignment = community_assignment;
   config.fully_random_citations = fully_random_citations;
   config.preferential_weight = preferential_weight;
   config.fitness_weight = fitness_weight;

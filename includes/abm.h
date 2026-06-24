@@ -35,6 +35,7 @@ struct SimulationConfig {
   bool use_alpha;
   bool start_from_checkpoint;
   std::string planted_nodes;
+  std::string community_assignment;
   double fully_random_citations;
   double preferential_weight;
   double fitness_weight;
@@ -109,8 +110,8 @@ public:
       : edgelist(config.edgelist), nodelist(config.nodelist),
         out_degree_bag(config.out_degree_bag),
         recency_table(config.recency_table), recency_bins(config.recency_bins),
-        alpha(config.alpha), minimum_alpha(config.minimum_alpha),
-        use_alpha(config.use_alpha),
+        community_assignment(config.community_assignment), alpha(config.alpha),
+        minimum_alpha(config.minimum_alpha), use_alpha(config.use_alpha),
         start_from_checkpoint(config.start_from_checkpoint),
         planted_nodes(config.planted_nodes),
         fully_random_citations(config.fully_random_citations),
@@ -246,6 +247,13 @@ public:
   injecting deterministic bad actors into the simulation timeline.
   */
   void ReadPlantedNodes();
+  /*
+  Input: None
+  Output: void
+  Description: Reads the community cluster assignments from the CSV file specified
+  in the configuration and populates the graph with this inherited clustering data.
+  */
+  void ReadCommunityAssignment();
   std::unordered_map<int, int> BuildContinuousNodeMapping(Graph *graph);
   std::vector<int> ReverseMapping(const std::unordered_map<int, int> &mapping);
   /*
@@ -580,6 +588,7 @@ protected:
   std::string out_degree_bag;
   std::string recency_table;
   std::string recency_bins;
+  std::string community_assignment;
   double alpha;
   double minimum_alpha;
   bool use_alpha;
