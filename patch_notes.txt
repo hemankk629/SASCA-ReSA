@@ -13,3 +13,7 @@
 * **OpenMP Parallelization & SIMD**: Rewrote simulation inner-loops to leverage OpenMP SIMD directives. Hoisted temporary iteration vectors to OpenMP thread-local scratchpads to avoid concurrent allocation overheads.
 * **Memory Management**: Removed six separate dynamic memory allocation structures in the `MakeCitations` workflow.
 * **Mapping Optimizations**: Converted `reverse_continuous_node_mapping` into a contiguous `std::vector` for faster, predictable node lookups.
+
+## Community Feature (further-improvement -> hkohli/community-feature)
+
+* **Community & Clustering Support**: Integrated a new `community_assignment` config parameter to allow agent nodes to inherit cluster IDs from their generator nodes, alongside a bundled `leiden_clustering.py` script for easy community file generation.

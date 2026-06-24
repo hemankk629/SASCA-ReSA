@@ -71,6 +71,7 @@ growth_rate=<DOUBLE> ; floating point value e.g., 0.03 for 3%
 num_cycles=<INT> ; integer value e.g., 30 for a 30-year simulation
 recency_bins=<STRING> ; string with comma separated values for each bin
 planted_agents=<(optional) FILE> ; csv with planted agent with a planted agent per line. See below for the list of supported columns.
+community_assignment=<(optional) FILE> ; csv with (node_id, cluster_id) mapping cluster IDs for nodes
 start_from_checkpoint=<BOOL> ; boolean value e.g., true or false for whether to start from a checkpoint or not
 
 [Agent]
@@ -141,6 +142,7 @@ In order to do a "single-bin model" run, in which agents cite based on preferent
 - `num_cycles`: integer value e.g., 30 for a 30-year simulation
 - `recency_bins`: This string is a user supplied comma separated string such that each comma separated value in the string is the start of the bin boundary. For example, a string "1,2,5,10,20" represents a binning for recency such that the first bin contains all publications that are less than 2 year old, meaning 1 <= current year - publication year < 2. It follows that the second bin now are publications that are at least 2 years old but at most 4 years old (2 <= current year - publication year < 5). The last bin is implied to go on until infinity so in this example, the last bin contains all publications that are at least 20 years old (20 <= current\_year - publication year < infinity).
 - `planted_agents`: an optional csv file with planted agents. The only required column is the "year" column. The year column specifies the relative year, from the start of the simulation, when the node should be planted. 1 is the earliest relative year an agent can be planted. Any column header here must match the exact name in the output nodelist. Only supported columns are "pa_weight", "fit_weight", "num_authors_weight", "author_reputation_weight", "out_degree", "alpha", "fit_lag_duration", "fit_peak_value", "fit_peak_duration", "num_authors", and "author_id."
+- `community_assignment`: an optional csv file mapping `node_id`s to community `cluster_id`s (or `comm_id`s). If provided, newly spawned agents generated during the simulation will inherit their cluster ID from their parent generator nodes.
 - `start_from_checkpoint` boolean value e.g., true or false for whether to start from a checkpoint or not. Check notes about `nodelist` and `edgelist` if this flag is set to true.
 
 #### Agent flags
@@ -195,3 +197,20 @@ Remember that
 
 ## Fitness Information
 For constant fitness, set minimum/maximum fitness lag duration to be 0 and minimum/maximum fitness peak duration to be 1000.
+
+## Leiden Clustering
+A Python script (`leiden_clustering.py`) is provided to easily generate community clusters from your seed networks using the Leiden algorithm.
+
+```console
+python leiden_clustering.py --nodelist <path_to_nodelist.csv> --edgelist <path_to_edgelist.csv> --output <path_to_output.csv>
+```
+
+**Options:**
+- `--node_col` (default: "node_id"): Column name for node IDs in the nodelist.
+- `--source_col` (default: "source"): Column name for source nodes in the edgelist.
+- `--target_col` (default: "target"): Column name for target nodes in the edgelist.
+- `--directed`: Flag to treat the graph as directed.
+- `--resolution` (default: 0.01): Resolution parameter for the Leiden algorithm.
+- `--objective` (default: "CPM"): Objective function to optimize (choices: "CPM" or "modularity").
+
+To use the output of this script in SASCA-ReSA, set the `community_assignment` flag in your `[Environment]` configuration to point to the generated output CSV.
