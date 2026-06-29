@@ -34,21 +34,24 @@ std::unordered_map<int, double> ABM::GetBinnedRecencyProbabilities() {
   return binned_recency_probabilities;
 }
 
-std::unordered_map<int, int> ABM::BuildContinuousNodeMapping(Graph *graph) {
+std::vector<int> ABM::BuildContinuousNodeMapping(Graph *graph) {
   this->next_node_id = 0;
-  std::unordered_map<int, int> continuous_node_mapping;
+  int max_node = this->GetMaxNode(graph);
+  std::vector<int> continuous_node_mapping(max_node + this->final_graph_size + 1, -1);
   for (auto const &node : this->graph->GetNodeSet()) {
-    this->continuous_node_mapping[node] = this->next_node_id;
+    continuous_node_mapping[node] = this->next_node_id;
     this->next_node_id++;
   }
-  return this->continuous_node_mapping;
+  return continuous_node_mapping;
 }
 
 std::vector<int>
-ABM::ReverseMapping(const std::unordered_map<int, int> &mapping) {
-  std::vector<int> reverse_mapping(mapping.size());
-  for (auto const &[key, val] : mapping) {
-    reverse_mapping[val] = key;
+ABM::ReverseMapping(const std::vector<int> &mapping) {
+  std::vector<int> reverse_mapping(this->final_graph_size, -1);
+  for (size_t i = 0; i < mapping.size(); i++) {
+    if (mapping[i] != -1) {
+      reverse_mapping[mapping[i]] = i;
+    }
   }
   return reverse_mapping;
 }
@@ -195,10 +198,10 @@ void ABM::UpdateGraphAttributesWeights(
 }
 
 void ABM::UpdateGraphAttributesNumAuthors(
-    Graph *graph, const std::unordered_map<int, int> &continuous_node_mapping,
+    Graph *graph, const std::vector<int> &continuous_node_mapping,
     std::span<int> num_authors_span) {
   for (auto const &node_id : this->graph->GetNodeSet()) {
-    int continuous_id = this->continuous_node_mapping.at(node_id);
+    int continuous_id = this->continuous_node_mapping[node_id];
     this->graph->SetNumAuthors(node_id, this->num_authors_vec[continuous_id]);
   }
 }
@@ -216,14 +219,14 @@ void ABM::UpdateGraphAttributesInitialAuthorReputations(
 
 void ABM::UpdateGraphAttributesFitnesses(
     Graph *graph, const std::vector<int> &new_nodes_vec,
-    const std::unordered_map<int, int> &continuous_node_mapping,
+    const std::vector<int> &continuous_node_mapping,
     std::span<int> fitness_lag_duration_span,
     std::span<int> fitness_peak_value_span,
     std::span<int> fitness_peak_duration_span, int initial_graph_size) {
   for (size_t i = 0; i < new_nodes_vec.size(); i++) {
     int current_node_id = new_nodes_vec.at(i);
     int current_weight_span_index =
-        this->continuous_node_mapping.at(current_node_id) -
+        continuous_node_mapping[current_node_id] -
         this->initial_graph_size;
     this->graph->SetFitnessLagDuration(
         current_node_id,
@@ -317,7 +320,6 @@ void ABM::FillSameYearSourceNodes(std::set<int> &same_year_source_nodes,
 std::vector<int> ABM::GetCartelGeneratorNodes(Graph *graph, int author_id) {
   std::vector<int> cartel_generator_nodes;
   int cartel_id = this->graph->GetCartelID(author_id);
-  const std::set<int> node_set = this->graph->GetNodeSet();
   for (auto const &cartel_author_id :
        this->graph->GetCartelAuthors(cartel_id)) {
     if (cartel_author_id == author_id) {
@@ -326,7 +328,7 @@ std::vector<int> ABM::GetCartelGeneratorNodes(Graph *graph, int author_id) {
     std::vector<int> cartel_author_publications =
         this->graph->GetAuthorPublications(cartel_author_id);
     for (const auto &cartel_author_publication : cartel_author_publications) {
-      if (!node_set.contains(cartel_author_publication)) {
+      if (!this->graph->HasNode(cartel_author_publication)) {
         continue;
       }
       cartel_generator_nodes.push_back(cartel_author_publication);
@@ -707,7 +709,9 @@ void ABM::InitializeSimulation() {
                 this->num_authors_bag, this->author_max_lifetime);
   this->InitializeSeedFitness(this->graph);
   this->logger.WriteToLogFile("loaded this->graph", Log::info);
-  /* node ids to continous integer from 0 */
+  this->initial_graph_size = this->graph->GetNodeSet().size();
+  this->final_graph_size = this->GetFinalGraphSize(this->graph);
+  this->graph->SortNodeSet();
   this->continuous_node_mapping = this->BuildContinuousNodeMapping(this->graph);
 
   /* continous integer from 0 to node ids*/
@@ -719,9 +723,6 @@ void ABM::InitializeSimulation() {
   this->initial_next_node_id = this->next_node_id;
 
   /* get input to score arrays based on this->continuous_node_mapping */
-  this->initial_graph_size = this->graph->GetNodeSet().size();
-  this->final_graph_size = this->GetFinalGraphSize(this->graph);
-  this->reverse_continuous_node_mapping.resize(this->final_graph_size);
   this->logger.WriteToLogFile("final this->graph size is " +
                                   std::to_string(this->final_graph_size),
                               Log::info);

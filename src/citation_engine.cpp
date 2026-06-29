@@ -82,7 +82,7 @@ int CitationEngine::MakeUniformRandomCitationsFromGraph(
 }
 
 int CitationEngine::MakeUniformRandomCitations(
-    Graph *graph, const std::unordered_map<int, int> &continuous_node_mapping,
+    Graph *graph, const std::vector<int> &continuous_node_mapping,
     int current_year, const std::vector<int> &candidate_nodes,
     std::span<int> citations, int current_graph_size, int num_citations) {
   if (num_citations <= 0) {
@@ -119,7 +119,7 @@ int CitationEngine::MakeUniformRandomCitations(
 
 int CitationEngine::MakeScoredCartelCitations(
     Graph *graph, const std::vector<int> &generator_nodes, int author_id,
-    const std::unordered_map<int, int> &continuous_node_mapping,
+    const std::vector<int> &continuous_node_mapping,
     const std::unordered_map<int, std::vector<int>> &n_hop_map,
     std::span<int> citations, int num_cartel_citations, int current_year,
     const std::unordered_map<int, double> &binned_recency_probabilities,
@@ -182,7 +182,7 @@ int CitationEngine::MakeScoredCartelCitations(
           graph->GetAuthorPublications(cartel_author_id);
       std::vector<int> already_published_cartel_author_publications;
       for (size_t i = 0; i < cartel_author_publications.size(); i++) {
-        if (graph->GetNodeSet().contains(cartel_author_publications.at(i)) &&
+        if (graph->HasNode(cartel_author_publications.at(i)) &&
             !in_neighborhood_cartel_nodes_set.contains(
                 cartel_author_publications.at(i)) &&
             !generator_nodes_set.contains(cartel_author_publications.at(i))) {
@@ -224,7 +224,7 @@ int CitationEngine::MakeScoredCartelCitations(
 
 int CitationEngine::MakeCartelCitations(
     Graph *graph, const std::vector<int> &generator_nodes, int author_id,
-    const std::unordered_map<int, int> &continuous_node_mapping,
+    const std::vector<int> &continuous_node_mapping,
     const std::unordered_map<int, std::vector<int>> &n_hop_map,
     std::span<int> citations, int num_cartel_citations, int current_year,
     const std::unordered_map<int, double> &binned_recency_probabilities,
@@ -246,7 +246,7 @@ int CitationEngine::MakeCartelCitations(
 
 int CitationEngine::MakeNullCartelCitations(
     Graph *graph, const std::vector<int> &generator_nodes, int author_id,
-    const std::unordered_map<int, int> &continuous_node_mapping,
+    const std::vector<int> &continuous_node_mapping,
     const std::unordered_map<int, std::vector<int>> &n_hop_map,
     std::span<int> citations, int num_cartel_citations) {
   // assume at this point that we are a cartel author
@@ -298,7 +298,7 @@ int CitationEngine::MakeNullCartelCitations(
           graph->GetAuthorPublications(cartel_author_id);
       std::vector<int> already_published_cartel_author_publications;
       for (size_t i = 0; i < cartel_author_publications.size(); i++) {
-        if (graph->GetNodeSet().contains(cartel_author_publications.at(i)) &&
+        if (graph->HasNode(cartel_author_publications.at(i)) &&
             !in_neighborhood_cartel_nodes_set.contains(
                 cartel_author_publications.at(i)) &&
             !generator_nodes_set.contains(cartel_author_publications.at(i))) {
@@ -338,7 +338,7 @@ int CitationEngine::MakeNullCartelCitations(
   return actual_num_cited;
 }
 int CitationEngine::MakeCitations(
-    Graph *graph, const std::unordered_map<int, int> &continuous_node_mapping,
+    Graph *graph, const std::vector<int> &continuous_node_mapping,
     int current_year, const std::vector<int> &candidate_nodes,
     std::span<int> citations, const NodeMetrics &metrics,
     const AgentWeights &weights, int current_graph_size, int num_citations) {
@@ -373,7 +373,7 @@ int CitationEngine::MakeCitations(
   raw_na_vec.reserve(candidate_nodes.size());
   raw_ar_vec.reserve(candidate_nodes.size());
   for (size_t i = 0; i < candidate_nodes.size(); i++) {
-    int continuous_node_id = continuous_node_mapping.at(candidate_nodes.at(i));
+    int continuous_node_id = continuous_node_mapping[candidate_nodes.at(i)];
     double current_pa = metrics.pa_span[continuous_node_id];
     double current_fit = metrics.fit_span[continuous_node_id];
     double current_na = metrics.na_span[continuous_node_id];

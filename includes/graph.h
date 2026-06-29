@@ -102,7 +102,7 @@ public:
     return header_to_index_map;
   }
 
-  const std::set<int> &GetNodeSet() const;
+  const std::vector<int> &GetNodeSet() const;
   const std::vector<std::vector<int>> &GetForwardAdjList() const;
   const std::vector<std::vector<int>> &GetBackwardAdjList() const;
   /*
@@ -320,6 +320,11 @@ public:
   // --- END DIRECT ATTRIBUTE ACCESSORS ---
 
   void AddNode(int u);
+  inline bool HasNode(int u) const {
+    if (u < 0 || static_cast<size_t>(u) >= is_node_present.size()) return false;
+    return is_node_present[u];
+  }
+  void SortNodeSet();
   /*
   Input: None
   Output: void
@@ -418,7 +423,8 @@ public:
   std::set<int> GetCartelSet() const;
 
 private:
-  std::set<int> node_set;
+  std::vector<int> node_vector;
+  std::vector<bool> is_node_present;
   std::string edgelist;
   std::string nodelist;
   std::set<int> cartel_set;

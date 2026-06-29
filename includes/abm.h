@@ -73,7 +73,7 @@ public:
   SimLogger logger;
 
   Graph *graph;
-  std::unordered_map<int, int> continuous_node_mapping;
+  std::vector<int> continuous_node_mapping;
   std::vector<int> reverse_continuous_node_mapping;
   int start_year;
   int next_node_id;
@@ -246,8 +246,8 @@ public:
   injecting deterministic bad actors into the simulation timeline.
   */
   void ReadPlantedNodes();
-  std::unordered_map<int, int> BuildContinuousNodeMapping(Graph *graph);
-  std::vector<int> ReverseMapping(const std::unordered_map<int, int> &mapping);
+  std::vector<int> BuildContinuousNodeMapping(Graph *graph);
+  std::vector<int> ReverseMapping(const std::vector<int> &mapping);
   /*
   Input: Graph *graph, const std::vector<int> &base_vec, const
   std::unordered_map<int, int> &reverse_continuous_node_mapping Output:
@@ -412,7 +412,7 @@ public:
       const std::unordered_map<int, int> &planted_nodes_line_number_map);
   /*
   Input: Graph *graph, const std::vector<int> &new_nodes_vec, const
-  std::unordered_map<int, int> &continuous_node_mapping, std::span<int>
+  std::vector<int> &continuous_node_mapping, std::span<int>
   fitness_lag_duration_span, std::span<int> fitness_peak_value_span,
   std::span<int> fitness_peak_duration_span, int initial_graph_size Output: void
   Description: Bulk-updates the temporal fitness trajectories (lag, peak,
@@ -420,7 +420,7 @@ public:
   */
   void UpdateGraphAttributesFitnesses(
       Graph *graph, const std::vector<int> &new_nodes_vec,
-      const std::unordered_map<int, int> &continuous_node_mapping,
+      const std::vector<int> &continuous_node_mapping,
       std::span<int> fitness_lag_duration_span,
       std::span<int> fitness_peak_value_span,
       std::span<int> fitness_peak_duration_span, int initial_graph_size);
@@ -431,7 +431,7 @@ public:
   nodes.
   */
   void UpdateGraphAttributesNumAuthors(
-      Graph *graph, const std::unordered_map<int, int> &continuous_node_mapping,
+      Graph *graph, const std::vector<int> &continuous_node_mapping,
       std::span<int> num_authors_span);
 
   /*

@@ -368,9 +368,21 @@ void Graph::AddEdge(std::pair<int, int> edge) {
   this->AddNode(edge.second);
 }
 
-void Graph::AddNode(int u) { this->node_set.insert(u); }
+void Graph::AddNode(int u) {
+  if (static_cast<size_t>(u) >= this->is_node_present.size()) {
+    this->is_node_present.resize(std::max((size_t)u + 1, this->is_node_present.size() * 2 + 1), false);
+  }
+  if (!this->is_node_present[u]) {
+    this->is_node_present[u] = true;
+    this->node_vector.push_back(u);
+  }
+}
 
-const std::set<int> &Graph::GetNodeSet() const { return this->node_set; }
+void Graph::SortNodeSet() {
+  std::sort(this->node_vector.begin(), this->node_vector.end());
+}
+
+const std::vector<int> &Graph::GetNodeSet() const { return this->node_vector; }
 const std::vector<std::vector<int>> &Graph::GetForwardAdjList() const {
   return this->forward_adj_list;
 }
