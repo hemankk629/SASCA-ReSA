@@ -397,21 +397,23 @@ std::vector<int> ABM::GetEligibleGeneratorNodes(
       fitness_eligible_generator_nodes.end(), [](auto &left, auto &right) {
         return left.first > right.first; // read
       });
-  std::set<int> eligible_in_degree_node_ids;
-  std::set<int> eligible_fitness_node_ids;
+  std::vector<int> eligible_in_degree_node_ids;
+  std::vector<int> eligible_fitness_node_ids;
   for (size_t i = 0; i < in_degree_eligible_generator_nodes.size(); i++) {
     if (in_degree_eligible_generator_nodes.at(i).first >=
         in_degree_eligible_generator_nodes.at(in_degree_top_n_nodes_index)
             .first) {
-      eligible_in_degree_node_ids.insert(
+      eligible_in_degree_node_ids.push_back(
           in_degree_eligible_generator_nodes.at(i).second);
     }
     if (fitness_eligible_generator_nodes.at(i).first >=
         fitness_eligible_generator_nodes.at(fitness_top_n_nodes_index).first) {
-      eligible_fitness_node_ids.insert(
+      eligible_fitness_node_ids.push_back(
           fitness_eligible_generator_nodes.at(i).second);
     }
   }
+  std::sort(eligible_in_degree_node_ids.begin(), eligible_in_degree_node_ids.end());
+  std::sort(eligible_fitness_node_ids.begin(), eligible_fitness_node_ids.end());
   std::set_intersection(
       eligible_in_degree_node_ids.begin(), eligible_in_degree_node_ids.end(),
       eligible_fitness_node_ids.begin(), eligible_fitness_node_ids.end(),
@@ -1026,7 +1028,7 @@ void ABM::RunSimulationLoop() {
       int num_hops = 2;
       // if use alpha then map has keys 1 and 2
       // if use alpha false then map has only key 1
-      std::unordered_map<int, std::vector<int>> n_hop_map =
+      std::vector<std::vector<int>> n_hop_map =
           this->neighborhood_search->GetNeighborhoodMap(
               this->graph, current_year, generator_nodes, num_hops);
 
@@ -1079,8 +1081,10 @@ void ABM::RunSimulationLoop() {
       // remove cartel cited nodes from n_hop_map
       std::set<int> cited_elements(citations.begin(),
                                    citations.begin() + num_actually_cited);
-      std::unordered_map<int, std::vector<int>> filtered_n_hop_map;
-      for (auto const &[distance, node_vec] : n_hop_map) {
+      std::vector<std::vector<int>> filtered_n_hop_map(n_hop_map.size());
+      for (size_t distance = 1; distance < n_hop_map.size(); distance++) {
+      const auto &node_vec = n_hop_map[distance];
+      if (node_vec.empty()) continue;
         filtered_n_hop_map[distance].reserve(this->neighborhood_sample);
         for (auto const &node_id : node_vec) {
           if (!cited_elements.contains(node_id)) {
@@ -1090,7 +1094,7 @@ void ABM::RunSimulationLoop() {
       }
       n_hop_map = filtered_n_hop_map;
       if (remaining_citation_quota > 0) {
-        std::unordered_map<int, int> num_citations_per_neighborhood =
+        std::vector<int> num_citations_per_neighborhood =
             this->neighborhood_search->GetNumCitationsPerNeighborhood(
                 alpha, remaining_citation_quota, n_hop_map);
         for (size_t current_neighborhood_index = 1;
@@ -1098,7 +1102,7 @@ void ABM::RunSimulationLoop() {
              current_neighborhood_index++) { // 2 iter if use alpha true
           try {
             sampled_neighborhood_sizes_map[i] +=
-                n_hop_map.at(current_neighborhood_index).size();
+                n_hop_map[current_neighborhood_index].size();
           } catch (...) {
             #pragma omp critical
             {
@@ -1107,11 +1111,11 @@ void ABM::RunSimulationLoop() {
             }
             throw;
           }
-          std::unordered_map<int, std::vector<int>> binned_neighborhood;
+          std::vector<std::vector<int>> binned_neighborhood;
           try {
             binned_neighborhood = this->neighborhood_search->BinNeighborhood(
                   this->graph, current_year,
-                  n_hop_map.at(current_neighborhood_index));
+                  n_hop_map[current_neighborhood_index]);
           } catch (...) {
             #pragma omp critical
             {
@@ -1124,11 +1128,11 @@ void ABM::RunSimulationLoop() {
               this->logger.LocalLogTime(local_parallel_stage_time_vec,
                                         local_prev_time, "bin neighborhood");
 
-          std::unordered_map<int, int> outdegree_per_bin_map;
+          std::vector<int> outdegree_per_bin_map;
           try {
             outdegree_per_bin_map = this->neighborhood_search->BinOutdegrees(
                   binned_neighborhood,
-                  num_citations_per_neighborhood.at(current_neighborhood_index),
+                  num_citations_per_neighborhood[current_neighborhood_index],
                   binned_recency_probabilities);
           } catch (...) {
             #pragma omp critical

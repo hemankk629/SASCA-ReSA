@@ -158,6 +158,7 @@ public:
     EnsureNodeCapacity(node);
     node_attributes[node].year = val;
   }
+  inline int GetMaxNodeID() const { return node_attributes.size(); }
 
   inline double GetAlpha(int node) const { return node_attributes[node].alpha; }
   inline void SetAlpha(int node, double val) {
@@ -435,14 +436,14 @@ private:
   std::vector<int> num_authors_bag_vec;
 
 protected:
-  std::unordered_map<int, std::vector<int>> publication_count_to_author_map;
+  std::vector<std::vector<int>> publication_count_to_author_vec;
   int next_author_id = 0;
   int lotka_exponent = 2;
   std::vector<std::vector<int>> forward_adj_list;
   std::vector<std::vector<int>> backward_adj_list;
-  std::unordered_map<int, int> author_birth_year_map;
-  std::unordered_map<int, std::vector<int>> author_publication_map;
-  std::unordered_map<int, int> author_reputation_map;
+  std::vector<int> author_birth_year_vec;
+  std::vector<std::vector<int>> author_publication_vec;
+  std::vector<int> author_reputation_vec;
   std::vector<NodeAttributes> node_attributes;
   inline void EnsureNodeCapacity(int node) {
     if (static_cast<size_t>(node) >= node_attributes.size()) {
@@ -453,8 +454,32 @@ protected:
       backward_adj_list.resize(new_size);
     }
   }
-  std::unordered_map<int, int> author_cartel_map;
-  std::unordered_map<int, std::set<int>> cartel_author_map;
+  inline void EnsureAuthorCapacity(int author) {
+    if (static_cast<size_t>(author) >= author_birth_year_vec.size()) {
+      size_t new_size =
+          std::max((size_t)author + 1, author_birth_year_vec.size() * 2 + 1);
+      author_birth_year_vec.resize(new_size, -1);
+      author_publication_vec.resize(new_size);
+      author_reputation_vec.resize(new_size, 0);
+      author_cartel_vec.resize(new_size, -1);
+    }
+  }
+  inline void EnsurePublicationCountCapacity(int pub_count) {
+    if (static_cast<size_t>(pub_count) >= publication_count_to_author_vec.size()) {
+      size_t new_size =
+          std::max((size_t)pub_count + 1, publication_count_to_author_vec.size() * 2 + 1);
+      publication_count_to_author_vec.resize(new_size);
+    }
+  }
+  inline void EnsureCartelCapacity(int cartel) {
+    if (static_cast<size_t>(cartel) >= cartel_author_vec.size()) {
+      size_t new_size =
+          std::max((size_t)cartel + 1, cartel_author_vec.size() * 2 + 1);
+      cartel_author_vec.resize(new_size);
+    }
+  }
+  std::vector<int> author_cartel_vec;
+  std::vector<std::set<int>> cartel_author_vec;
 };
 
 #endif

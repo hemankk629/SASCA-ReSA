@@ -115,11 +115,12 @@ void Graph::ParseNodelist() {
           this->cartel_set.insert(cartel_id);
           this->SetCartelID(author, cartel_id);
         }
-        if (this->author_birth_year_map.contains(author)) {
-          this->author_birth_year_map[author] =
-              std::min(this->author_birth_year_map[author], integer_year);
+        this->EnsureAuthorCapacity(author);
+        if (this->author_birth_year_vec[author] != -1) {
+          this->author_birth_year_vec[author] =
+              std::min(this->author_birth_year_vec[author], integer_year);
         } else {
-          this->author_birth_year_map[author] = integer_year;
+          this->author_birth_year_vec[author] = integer_year;
         }
         this->UpdateAuthorPublicationMap(author, integer_node);
         this->next_author_id = std::max(this->next_author_id, author);
@@ -138,10 +139,14 @@ void Graph::ParseNodelist() {
   }
   if (this->start_from_checkpoint) {
     this->next_author_id++;
-    for (const auto &[author_id, birth_year] : author_birth_year_map) {
+    this->publication_count_to_author_vec.clear();
+    for (size_t author_id = 0; author_id < this->author_birth_year_vec.size(); author_id++) {
+      int birth_year = this->author_birth_year_vec[author_id];
+      if (birth_year == -1) continue;
       int author_id_publication_count =
-          this->author_publication_map.at(author_id).size();
-      this->publication_count_to_author_map[author_id_publication_count]
+          this->author_publication_vec.at(author_id).size();
+      this->EnsurePublicationCountCapacity(author_id_publication_count);
+      this->publication_count_to_author_vec[author_id_publication_count]
           .push_back(author_id);
     }
   } else {
@@ -164,7 +169,7 @@ void Graph::ParseNodelist() {
           int node_id = node_year_vec.at(j).first;
           int author_id = this->GetAuthorId(node_id);
           this->SetInitialAuthorReputation(
-              node_id, this->author_reputation_map.at(author_id));
+              node_id, this->author_reputation_vec.at(author_id));
         }
         previous_index = i;
         previous_year = node_year_vec.at(previous_index).second;
@@ -176,7 +181,7 @@ void Graph::ParseNodelist() {
         int node_id = node_year_vec.at(j).first;
         int author_id = this->GetAuthorId(node_id);
         this->SetInitialAuthorReputation(
-            node_id, this->author_reputation_map.at(author_id));
+            node_id, this->author_reputation_vec.at(author_id));
       }
     }
   }
@@ -185,62 +190,67 @@ void Graph::ParseNodelist() {
 std::set<int> Graph::GetCartelSet() const { return this->cartel_set; }
 
 void Graph::SetCartelID(int author, int cartel_id) {
-  this->author_cartel_map[author] = cartel_id;
-  this->cartel_author_map[cartel_id].insert(author);
+  this->EnsureAuthorCapacity(author);
+  this->EnsureCartelCapacity(cartel_id);
+  this->author_cartel_vec[author] = cartel_id;
+  this->cartel_author_vec[cartel_id].insert(author);
 }
 
 std::set<int> Graph::GetCartelAuthors(int cartel_id) const {
-  if (cartel_id == -1) {
+  if (cartel_id == -1 || static_cast<size_t>(cartel_id) >= this->cartel_author_vec.size()) {
     return std::set<int>();
   }
-  return this->cartel_author_map.at(cartel_id);
+  return this->cartel_author_vec[cartel_id];
 }
 
 std::vector<int> Graph::GetAuthorPublications(int author_id) const {
   static const std::vector<int> empty_vec;
-  if (!this->author_publication_map.contains(author_id)) {
+  if (static_cast<size_t>(author_id) >= this->author_publication_vec.size()) {
     return empty_vec;
   }
-  return this->author_publication_map.at(author_id);
+  return this->author_publication_vec[author_id];
 }
 
 int Graph::GetCartelID(int author) const {
-  if (this->author_cartel_map.contains(author)) {
-    return this->author_cartel_map.at(author);
+  if (static_cast<size_t>(author) < this->author_cartel_vec.size() && this->author_cartel_vec[author] != -1) {
+    return this->author_cartel_vec[author];
   }
   return -1;
 }
 
 void Graph::UpdateAuthorPublicationMap(int author, int node) {
-  this->author_publication_map[author].push_back(node);
+  this->EnsureAuthorCapacity(author);
+  this->author_publication_vec[author].push_back(node);
 }
 
 void Graph::ComputeAuthorReputations() {
-  for (const auto &[author_id, birth_year] : this->author_birth_year_map) {
-    if (!this->author_publication_map.contains(author_id)) {
-      std::cerr << "Missing author_id in author_publication_map: " << author_id << "\n";
-      throw std::out_of_range("Missing author_id in author_publication_map");
+  for (size_t author_id = 0; author_id < this->author_birth_year_vec.size(); author_id++) {
+    int birth_year = this->author_birth_year_vec[author_id];
+    if (birth_year == -1) continue;
+    if (author_id >= this->author_publication_vec.size() || this->author_publication_vec[author_id].empty()) {
+      std::cerr << "Missing author_id in author_publication_vec: " << author_id << "\n";
+      throw std::out_of_range("Missing author_id in author_publication_vec");
     }
-    const std::vector<int> &publication_vec =
-        this->author_publication_map.at(author_id);
+    std::vector<int> author_publications =
+        this->author_publication_vec.at(author_id);
     int h_index = 0;
-    if (!publication_vec.empty()) {
+    if (!author_publications.empty()) {
       std::unordered_map<int, int> freq_map;
-      for (size_t i = 0; i < publication_vec.size(); i++) {
-        int current_publication = publication_vec.at(i);
+      for (size_t i = 0; i < author_publications.size(); i++) {
+        int current_publication = author_publications.at(i);
         size_t current_publication_in_degree =
             this->GetInDegree(current_publication);
-        freq_map[std::min(publication_vec.size(),
+        freq_map[std::min(author_publications.size(),
                           current_publication_in_degree)]++;
       }
-      h_index = publication_vec.size();
+      h_index = author_publications.size();
       int num_candidate_papers = freq_map[h_index];
       while (h_index > num_candidate_papers) {
         h_index--;
         num_candidate_papers += freq_map[h_index];
       }
     }
-    this->author_reputation_map[author_id] = h_index;
+    this->author_reputation_vec[author_id] = h_index;
   }
 }
 
@@ -248,13 +258,13 @@ void Graph::SaveInitialAuthorReputations() {
   for (const auto &node_id : this->GetNodeSet()) {
     int author_id = this->GetAuthorId(node_id);
     this->SetInitialAuthorReputation(node_id,
-                                     this->author_reputation_map.at(author_id));
+                                     this->author_reputation_vec.at(author_id));
   }
 }
 
 int Graph::GetAuthorReputationForNode(int node) const {
   int author_id = this->GetAuthorId(node);
-  return this->author_reputation_map.at(author_id);
+  return this->author_reputation_vec.at(author_id);
 }
 
 int Graph::GetNextNumAuthors() {
@@ -289,16 +299,17 @@ void Graph::ReadNumAuthorsBag() {
 
 void Graph::UpdateAuthorManual(int author_id) {
   int num_publications_by_author =
-      this->author_publication_map.contains(author_id) ? this->author_publication_map.at(author_id).size() : 0;
-  std::erase(this->publication_count_to_author_map[num_publications_by_author],
+      static_cast<size_t>(author_id) < this->author_publication_vec.size() ? this->author_publication_vec[author_id].size() : 0;
+  this->EnsurePublicationCountCapacity(num_publications_by_author + 1);
+  std::erase(this->publication_count_to_author_vec[num_publications_by_author],
              author_id);
-  this->publication_count_to_author_map[num_publications_by_author + 1]
+  this->publication_count_to_author_vec[num_publications_by_author + 1]
       .push_back(author_id);
 }
 
 int Graph::GetNextAuthor(int current_year, const std::set<int> &exclusion_set) {
   int num_authors_with_one_paper =
-      this->publication_count_to_author_map[1].size();
+      this->publication_count_to_author_vec[1].size();
   bool found_valid_place = false;
   int proposed_publication_count_for_author = 2;
   int return_author = this->next_author_id;
@@ -308,8 +319,9 @@ int Graph::GetNextAuthor(int current_year, const std::set<int> &exclusion_set) {
     int expected_num_authors_with_proposed_publication_count = std::round(
         num_authors_with_one_paper /
         pow(proposed_publication_count_for_author, this->lotka_exponent));
+    this->EnsurePublicationCountCapacity(proposed_publication_count_for_author);
     int actual_num_authors_with_proposed_publication_count =
-        this->publication_count_to_author_map
+        this->publication_count_to_author_vec
             [proposed_publication_count_for_author]
                 .size();
     int deficit = expected_num_authors_with_proposed_publication_count -
@@ -322,13 +334,13 @@ int Graph::GetNextAuthor(int current_year, const std::set<int> &exclusion_set) {
   }
   if (found_valid_place) {
     std::vector<int> living_authors;
-    for (size_t i = 0; i < this->publication_count_to_author_map
+    for (size_t i = 0; i < this->publication_count_to_author_vec
                                [proposed_publication_count_for_author - 1]
                                    .size();
          i++) {
-      int current_author = this->publication_count_to_author_map
+      int current_author = this->publication_count_to_author_vec
                                [proposed_publication_count_for_author - 1][i];
-      if (current_year - this->author_birth_year_map[current_author] <
+      if (current_year - this->author_birth_year_vec[current_author] <
               this->author_max_lifetime &&
           !exclusion_set.contains(current_author)) {
         living_authors.push_back(current_author);
@@ -339,10 +351,10 @@ int Graph::GetNextAuthor(int current_year, const std::set<int> &exclusion_set) {
       std::ranges::shuffle(living_authors, generator);
       int upgraded_author_id = living_authors.back();
       return_author = upgraded_author_id;
-      std::erase(this->publication_count_to_author_map
+      std::erase(this->publication_count_to_author_vec
                      [proposed_publication_count_for_author - 1],
                  upgraded_author_id);
-      this->publication_count_to_author_map
+      this->publication_count_to_author_vec
           [proposed_publication_count_for_author]
               .push_back(upgraded_author_id);
     } else {
@@ -350,8 +362,10 @@ int Graph::GetNextAuthor(int current_year, const std::set<int> &exclusion_set) {
     }
   }
   if (!found_valid_place) {
-    this->publication_count_to_author_map[1].push_back(this->next_author_id);
-    this->author_birth_year_map[this->next_author_id] = current_year;
+    this->EnsureAuthorCapacity(this->next_author_id);
+    this->EnsurePublicationCountCapacity(1);
+    this->publication_count_to_author_vec[1].push_back(this->next_author_id);
+    this->author_birth_year_vec[this->next_author_id] = current_year;
     this->next_author_id++;
   }
   return return_author;

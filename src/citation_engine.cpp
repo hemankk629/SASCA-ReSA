@@ -38,20 +38,20 @@ int CitationEngine::MakeUniformRandomCitationsFromGraph(
     return 0;
   }
   int actual_num_cited = num_citations;
-  std::set<int> selected;
+  std::vector<int> selected;
   for (int i = 0; i < num_cited_so_far; i++) {
-    selected.insert(citations[i]);
+    selected.push_back(citations[i]);
   }
   for (size_t i = 0; i < generator_nodes.size(); i++) {
-    selected.insert(generator_nodes.at(i));
+    selected.push_back(generator_nodes.at(i));
   }
   if ((int)graph->GetNodeSet().size() - (int)selected.size() <= num_citations) {
     actual_num_cited = (int)graph->GetNodeSet().size() - (int)selected.size();
     int current_citation_index = 0;
     for (auto const &node_id : graph->GetNodeSet()) {
-      if (!selected.contains(node_id)) {
+      if (std::find(selected.begin(), selected.end(), node_id) == selected.end()) {
         citations[num_cited_so_far + current_citation_index] = node_id;
-        selected.insert(node_id);
+        selected.push_back(node_id);
         current_citation_index++;
       }
     }
@@ -70,10 +70,10 @@ int CitationEngine::MakeUniformRandomCitationsFromGraph(
                   << " from continous index: "
                   << std::to_string(current_citation) << std::endl;
       }
-      if (!selected.contains(current_cited_node)) {
+      if (std::find(selected.begin(), selected.end(), current_cited_node) == selected.end()) {
         citations[num_cited_so_far + current_citation_index] =
             current_cited_node;
-        selected.insert(current_cited_node);
+        selected.push_back(current_cited_node);
         current_citation_index++;
       }
     }
@@ -102,14 +102,14 @@ int CitationEngine::MakeUniformRandomCitations(
     pcg32 &generator = Utils::GetThreadLocalPRNG();
     std::uniform_int_distribution<int> int_uniform_distribution(
         0, (int)(candidate_nodes.size() - 1));
-    std::set<int> selected;
+    std::vector<int> selected;
     int current_citation_index = 0;
     while ((int)selected.size() != actual_num_cited) {
       int current_selected_index = int_uniform_distribution(generator);
       int current_node = candidate_nodes.at(current_selected_index);
-      if (!selected.contains(current_node)) {
+      if (std::find(selected.begin(), selected.end(), current_node) == selected.end()) {
         citations[current_citation_index] = current_node;
-        selected.insert(current_node);
+        selected.push_back(current_node);
         current_citation_index++;
       }
     }
@@ -120,7 +120,7 @@ int CitationEngine::MakeUniformRandomCitations(
 int CitationEngine::MakeScoredCartelCitations(
     Graph *graph, const std::vector<int> &generator_nodes, int author_id,
     const std::vector<int> &continuous_node_mapping,
-    const std::unordered_map<int, std::vector<int>> &n_hop_map,
+    const std::vector<std::vector<int>> &n_hop_map,
     std::span<int> citations, int num_cartel_citations, int current_year,
     const std::unordered_map<int, double> &binned_recency_probabilities,
     const NodeMetrics &metrics, const AgentWeights &weights,
@@ -132,7 +132,9 @@ int CitationEngine::MakeScoredCartelCitations(
   std::vector<int> in_neighborhood_cartel_nodes;
   int cartel_id = graph->GetCartelID(author_id);
   std::set<int> current_cartel_authors = graph->GetCartelAuthors(cartel_id);
-  for (auto const &[distance, node_vec] : n_hop_map) {
+  for (size_t distance = 1; distance < n_hop_map.size(); distance++) {
+      const auto &node_vec = n_hop_map[distance];
+      if (node_vec.empty()) continue;
     std::vector<int> current_node_vec(node_vec);
     std::ranges::shuffle(current_node_vec, generator);
     for (auto const &node_id : current_node_vec) {
@@ -149,10 +151,10 @@ int CitationEngine::MakeScoredCartelCitations(
   }
   std::set<int> in_neighborhood_cartel_nodes_set(
       in_neighborhood_cartel_nodes.begin(), in_neighborhood_cartel_nodes.end());
-  std::unordered_map<int, std::vector<int>> binned_neighborhood =
+  std::vector<std::vector<int>> binned_neighborhood =
       this->neighborhood_search->BinNeighborhood(graph, current_year,
                                                  in_neighborhood_cartel_nodes);
-  std::unordered_map<int, int> outdegree_per_bin_map =
+  std::vector<int> outdegree_per_bin_map =
       this->neighborhood_search->BinOutdegrees(binned_neighborhood,
                                                num_cartel_citations,
                                                binned_recency_probabilities);
@@ -198,10 +200,10 @@ int CitationEngine::MakeScoredCartelCitations(
             already_published_cartel_author_publications.at(0));
       }
     }
-    std::unordered_map<int, std::vector<int>> binned_neighborhood =
+    std::vector<std::vector<int>> binned_neighborhood =
         this->neighborhood_search->BinNeighborhood(
             graph, current_year, outside_neighborhood_cartel_nodes);
-    std::unordered_map<int, int> outdegree_per_bin_map =
+    std::vector<int> outdegree_per_bin_map =
         this->neighborhood_search->BinOutdegrees(binned_neighborhood,
                                                  remaining_num_cartel_citations,
                                                  binned_recency_probabilities);
@@ -225,7 +227,7 @@ int CitationEngine::MakeScoredCartelCitations(
 int CitationEngine::MakeCartelCitations(
     Graph *graph, const std::vector<int> &generator_nodes, int author_id,
     const std::vector<int> &continuous_node_mapping,
-    const std::unordered_map<int, std::vector<int>> &n_hop_map,
+    const std::vector<std::vector<int>> &n_hop_map,
     std::span<int> citations, int num_cartel_citations, int current_year,
     const std::unordered_map<int, double> &binned_recency_probabilities,
     const NodeMetrics &metrics, const AgentWeights &weights,
@@ -247,7 +249,7 @@ int CitationEngine::MakeCartelCitations(
 int CitationEngine::MakeNullCartelCitations(
     Graph *graph, const std::vector<int> &generator_nodes, int author_id,
     const std::vector<int> &continuous_node_mapping,
-    const std::unordered_map<int, std::vector<int>> &n_hop_map,
+    const std::vector<std::vector<int>> &n_hop_map,
     std::span<int> citations, int num_cartel_citations) {
   // assume at this point that we are a cartel author
   std::set<int> generator_nodes_set(generator_nodes.begin(),
@@ -256,7 +258,9 @@ int CitationEngine::MakeNullCartelCitations(
   std::vector<int> in_neighborhood_cartel_nodes;
   int cartel_id = graph->GetCartelID(author_id);
   std::set<int> current_cartel_authors = graph->GetCartelAuthors(cartel_id);
-  for (auto const &[distance, node_vec] : n_hop_map) {
+  for (size_t distance = 1; distance < n_hop_map.size(); distance++) {
+      const auto &node_vec = n_hop_map[distance];
+      if (node_vec.empty()) continue;
     std::vector<int> current_node_vec(node_vec);
     std::ranges::shuffle(current_node_vec, generator);
     for (auto const &node_id : current_node_vec) {
@@ -450,12 +454,14 @@ int CitationEngine::MakeCitations(
 }
 int CitationEngine::GetNumCartelCitations(
     Graph *graph, int author_id,
-    const std::unordered_map<int, std::vector<int>> &n_hop_map,
+    const std::vector<std::vector<int>> &n_hop_map,
     int total_num_citations_neighborhood) {
   std::set<int> cartel_authors_in_neighborhood;
   int current_cartel_id = graph->GetCartelID(author_id);
   if (current_cartel_id > 0) {
-    for (auto const &[distance, node_vec] : n_hop_map) {
+    for (size_t distance = 1; distance < n_hop_map.size(); distance++) {
+      const auto &node_vec = n_hop_map[distance];
+      if (node_vec.empty()) continue;
       for (size_t i = 0; i < node_vec.size(); i++) {
         int node_author_id = graph->GetAuthorId(node_vec.at(i));
         int node_cartel_id = graph->GetCartelID(node_author_id);

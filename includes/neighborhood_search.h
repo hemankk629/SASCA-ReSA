@@ -25,7 +25,7 @@ public:
   Main entry point for gathering neighborhood nodes. Defers to specific N-hop
                strategies based on the configuration of the search instance.
   */
-  std::unordered_map<int, std::vector<int>>
+  std::vector<std::vector<int>>
   GetNeighborhoodMap(Graph *graph, int current_year,
                      const std::vector<int> &generator_nodes, int num_hops);
   /*
@@ -35,7 +35,7 @@ public:
   Specifically computes the union of the 1-hop and 2-hop co-author network for
   the given generator nodes, filtering by the current year.
   */
-  std::unordered_map<int, std::vector<int>>
+  std::vector<std::vector<int>>
   GetOneAndTwoDistanceNeighborhoods(Graph *graph, int current_year,
                                     const std::vector<int> &generator_nodes,
                                     int num_hops);
@@ -46,7 +46,7 @@ public:
   the N-hop co-author network recursively or iteratively, expanding outward up
   to num_hops distances.
   */
-  std::unordered_map<int, std::vector<int>>
+  std::vector<std::vector<int>>
   GetNHopNeighborhood(Graph *graph, int current_year,
                       const std::vector<int> &generator_nodes, int num_hops);
 
@@ -70,7 +70,7 @@ public:
   in that age bin) Description: Partitions a flat list of neighborhood nodes
   into separate buckets depending on how recently the papers were published.
   */
-  std::unordered_map<int, std::vector<int>>
+  std::vector<std::vector<int>>
   BinNeighborhood(Graph *graph, int current_year, std::vector<int> n_hop_list);
   /*
   Input: const std::unordered_map<int, std::vector<int>> &binned_neighborhood,
@@ -80,8 +80,8 @@ public:
   (citations) across different age bins based on the configured probability
   distribution for recency.
   */
-  std::unordered_map<int, int> BinOutdegrees(
-      const std::unordered_map<int, std::vector<int>> &binned_neighborhood,
+  std::vector<int> BinOutdegrees(
+      const std::vector<std::vector<int>> &binned_neighborhood,
       int total_outdegree,
       const std::unordered_map<int, double> &binned_recency_probabilities);
   /*
@@ -92,9 +92,9 @@ public:
   distribute across various distances or groups in the neighborhood based on an
   alpha bias factor.
   */
-  std::unordered_map<int, int> GetNumCitationsPerNeighborhood(
+  std::vector<int> GetNumCitationsPerNeighborhood(
       double alpha, int total_num_citations_neighborhood,
-      const std::unordered_map<int, std::vector<int>> &n_hop_map);
+      const std::vector<std::vector<int>> &n_hop_map);
 
   std::string recency_bins_str;
   bool use_alpha;
@@ -108,6 +108,14 @@ public:
   internal integer boundary vectors for rapid bin lookups.
   */
   void InitializeBinBoundaries();
+
+  std::vector<int> visited_epoch;
+  int current_epoch = 0;
+  inline void EnsureVisitedEpochCapacity(int max_node_id) {
+    if (static_cast<size_t>(max_node_id) >= visited_epoch.size()) {
+      visited_epoch.resize(std::max((size_t)max_node_id + 1, visited_epoch.size() * 2), 0);
+    }
+  }
 };
 
 #endif
