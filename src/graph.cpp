@@ -469,3 +469,26 @@ void Graph::WriteAttributes(std::string auxiliary_information_file) const {
   }
   auxiliary_information_filehandle.close();
 }
+
+void Graph::AddNodeToCluster(int node, int cluster_id) {
+  if (cluster_id >= 0) {
+    this->cluster_nodes_map[cluster_id].push_back(node);
+  }
+}
+
+const std::vector<int> &Graph::GetClusterNodes(int cluster_id) const {
+  static const std::vector<int> empty_cluster;
+  auto it = this->cluster_nodes_map.find(cluster_id);
+  if (it != this->cluster_nodes_map.end()) {
+    return it->second;
+  }
+  return empty_cluster;
+}
+
+int Graph::GetClusterSize(int cluster_id) const {
+  auto it = this->cluster_nodes_map.find(cluster_id);
+  if (it != this->cluster_nodes_map.end()) {
+    return it->second.size();
+  }
+  return 0;
+}

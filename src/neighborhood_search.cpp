@@ -29,8 +29,7 @@ void NeighborhoodSearch::InitializeBinBoundaries() {
   this->num_bins = element_no;
 }
 
-std::unordered_map<int, int>
-NeighborhoodSearch::GetNumCitationsPerNeighborhood(
+std::unordered_map<int, int> NeighborhoodSearch::GetNumCitationsPerNeighborhood(
     double alpha, int total_num_citations_neighborhood,
     const std::unordered_map<int, std::vector<int>> &n_hop_map) {
   std::unordered_map<int, int> num_citations_per_neighborhood;
@@ -39,18 +38,18 @@ NeighborhoodSearch::GetNumCitationsPerNeighborhood(
       int total_num_citations_neighborhood_clamped =
           std::min((int)(n_hop_map.at(1).size() + n_hop_map.at(2).size()),
                    total_num_citations_neighborhood);
-      num_citations_per_neighborhood[1] = std::min(
-          (int)(total_num_citations_neighborhood_clamped * alpha),
-          (int)n_hop_map.at(1).size());
-      num_citations_per_neighborhood[2] = std::min(
-          total_num_citations_neighborhood_clamped -
-              num_citations_per_neighborhood[1],
-          (int)n_hop_map.at(2).size());
+      num_citations_per_neighborhood[1] =
+          std::min((int)(total_num_citations_neighborhood_clamped * alpha),
+                   (int)n_hop_map.at(1).size());
+      num_citations_per_neighborhood[2] =
+          std::min(total_num_citations_neighborhood_clamped -
+                       num_citations_per_neighborhood[1],
+                   (int)n_hop_map.at(2).size());
     } else if (n_hop_map.size() == 1) {
       // Assuming if size is 1, the key is 1 since we explore distance 1 first
       if (n_hop_map.contains(1)) {
-        num_citations_per_neighborhood[1] =
-            std::min(total_num_citations_neighborhood, (int)n_hop_map.at(1).size());
+        num_citations_per_neighborhood[1] = std::min(
+            total_num_citations_neighborhood, (int)n_hop_map.at(1).size());
       }
     }
   }
@@ -95,17 +94,21 @@ std::unordered_map<int, int> NeighborhoodSearch::BinOutdegrees(
     remaining_outdegree--;
   }
   for (int bin_index = 0; bin_index < this->num_bins; bin_index++) {
-    int binned_size = binned_neighborhood.contains(bin_index) ? binned_neighborhood.at(bin_index).size() : 0;
-    int current_uncited_num_nodes = target_outdegree_per_bin_map[bin_index] - binned_size;
+    int binned_size = binned_neighborhood.contains(bin_index)
+                          ? binned_neighborhood.at(bin_index).size()
+                          : 0;
+    int current_uncited_num_nodes =
+        target_outdegree_per_bin_map[bin_index] - binned_size;
     if (current_uncited_num_nodes > 0) {
       for (int sweep_index = bin_index - 1;
            sweep_index >= 0 && current_uncited_num_nodes > 0; sweep_index--) {
-        int sweep_binned_size = binned_neighborhood.contains(sweep_index) ? binned_neighborhood.at(sweep_index).size() : 0;
+        int sweep_binned_size = binned_neighborhood.contains(sweep_index)
+                                    ? binned_neighborhood.at(sweep_index).size()
+                                    : 0;
         if (target_outdegree_per_bin_map[sweep_index] < sweep_binned_size) {
-          int current_citable =
-              std::min(current_uncited_num_nodes,
-                       sweep_binned_size -
-                           target_outdegree_per_bin_map[sweep_index]);
+          int current_citable = std::min(
+              current_uncited_num_nodes,
+              sweep_binned_size - target_outdegree_per_bin_map[sweep_index]);
           current_uncited_num_nodes -= current_citable;
           target_outdegree_per_bin_map[sweep_index] += current_citable;
           target_outdegree_per_bin_map[bin_index] -= current_citable;
@@ -114,12 +117,13 @@ std::unordered_map<int, int> NeighborhoodSearch::BinOutdegrees(
       for (int sweep_index = bin_index + 1;
            sweep_index < this->num_bins && current_uncited_num_nodes > 0;
            sweep_index++) {
-        int sweep_binned_size = binned_neighborhood.contains(sweep_index) ? binned_neighborhood.at(sweep_index).size() : 0;
+        int sweep_binned_size = binned_neighborhood.contains(sweep_index)
+                                    ? binned_neighborhood.at(sweep_index).size()
+                                    : 0;
         if (target_outdegree_per_bin_map[sweep_index] < sweep_binned_size) {
-          int current_citable =
-              std::min(current_uncited_num_nodes,
-                       sweep_binned_size -
-                           target_outdegree_per_bin_map[sweep_index]);
+          int current_citable = std::min(
+              current_uncited_num_nodes,
+              sweep_binned_size - target_outdegree_per_bin_map[sweep_index]);
           current_uncited_num_nodes -= current_citable;
           target_outdegree_per_bin_map[sweep_index] += current_citable;
           target_outdegree_per_bin_map[bin_index] -= current_citable;

@@ -30,7 +30,8 @@ void MetricsEngine::FillAuthorReputationSpan(
 
 void MetricsEngine::FillFitnessSpan(
     Graph *graph, const std::vector<int> &reverse_continuous_node_mapping,
-    int current_year, std::span<int> fitness_span, int fitness_decay_alpha, int current_graph_size) {
+    int current_year, std::span<int> fitness_span, int fitness_decay_alpha,
+    int current_graph_size) {
 #pragma omp parallel for simd
   for (int i = 0; i < current_graph_size; i++) {
     int node = reverse_continuous_node_mapping[i];

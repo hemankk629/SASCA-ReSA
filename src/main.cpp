@@ -179,6 +179,7 @@ int main(int argc, char *argv[]) {
   int recency_threshold = reader.GetInteger("Agent", "recency_threshold", -42);
   double non_random_generator_probability =
       reader.GetReal("Agent", "non_random_generator_probability", -42);
+  int theta = reader.GetInteger("Agent", "theta", -42);
   std::string start_from_checkpoint_string =
       reader.Get("Environment", "start_from_checkpoint", "");
   bool start_from_checkpoint = false;
@@ -231,6 +232,7 @@ int main(int argc, char *argv[]) {
   config.fitness_threshold = fitness_threshold;
   config.recency_threshold = recency_threshold;
   config.non_random_generator_probability = non_random_generator_probability;
+  config.theta = theta;
   config.growth_rate = growth_rate;
   config.num_cycles = num_cycles;
   config.same_year_citations = same_year_citations;

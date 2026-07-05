@@ -426,6 +426,27 @@ public:
   */
   std::set<int> GetCartelSet() const;
 
+  /*
+  Input: int node, int cluster_id
+  Output: void
+  Description: Appends a node to the internal tracking list for a specific
+  cluster assignment.
+  */
+  void AddNodeToCluster(int node, int cluster_id);
+  /*
+  Input: int cluster_id
+  Output: const std::vector<int>&
+  Description: Returns all node IDs that belong to the given cluster.
+  */
+  const std::vector<int> &GetClusterNodes(int cluster_id) const;
+  /*
+  Input: int cluster_id
+  Output: int
+  Description: Retrieves the number of nodes currently assigned to the given
+  cluster.
+  */
+  int GetClusterSize(int cluster_id) const;
+
 private:
   std::set<int> node_set;
   std::string edgelist;
@@ -458,6 +479,7 @@ protected:
   }
   std::unordered_map<int, int> author_cartel_map;
   std::unordered_map<int, std::set<int>> cartel_author_map;
+  std::unordered_map<int, std::vector<int>> cluster_nodes_map;
 };
 
 #endif

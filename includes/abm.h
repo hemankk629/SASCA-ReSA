@@ -53,6 +53,7 @@ struct SimulationConfig {
   int fitness_threshold;
   int recency_threshold;
   double non_random_generator_probability;
+  int theta;
   double growth_rate;
   int num_cycles;
   double same_year_citations;
@@ -132,7 +133,8 @@ public:
         recency_threshold(config.recency_threshold),
         non_random_generator_probability(
             config.non_random_generator_probability),
-        growth_rate(config.growth_rate), num_cycles(config.num_cycles),
+        theta(config.theta), growth_rate(config.growth_rate),
+        num_cycles(config.num_cycles),
         same_year_citations(config.same_year_citations),
         neighborhood_sample(config.neighborhood_sample),
         num_authors_bag(config.num_authors_bag),
@@ -250,8 +252,9 @@ public:
   /*
   Input: None
   Output: void
-  Description: Reads the community cluster assignments from the CSV file specified
-  in the configuration and populates the graph with this inherited clustering data.
+  Description: Reads the community cluster assignments from the CSV file
+  specified in the configuration and populates the graph with this inherited
+  clustering data.
   */
   void ReadCommunityAssignment();
   std::unordered_map<int, int> BuildContinuousNodeMapping(Graph *graph);
@@ -611,6 +614,7 @@ protected:
   int fitness_threshold;
   int recency_threshold;
   double non_random_generator_probability;
+  int theta;
   double growth_rate;
   int num_cycles;
   double same_year_citations;

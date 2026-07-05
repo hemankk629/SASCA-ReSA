@@ -289,7 +289,8 @@ void ABM::UpdateGraphAttributesGeneratorNodes(
   int inherited_cluster_id = -1;
   if (!generator_nodes.empty()) {
     generator_node_string += std::to_string(generator_nodes.at(0));
-    inherited_cluster_id = this->graph->GetCommunityAssignment(generator_nodes.at(0));
+    inherited_cluster_id =
+        this->graph->GetCommunityAssignment(generator_nodes.at(0));
     for (size_t i = 1; i < generator_nodes.size(); i++) {
       generator_node_string += ";";
       generator_node_string += std::to_string(generator_nodes.at(i));
@@ -297,6 +298,9 @@ void ABM::UpdateGraphAttributesGeneratorNodes(
   }
   this->graph->SetGeneratorNodeString(new_node, generator_node_string);
   this->graph->SetCommunityAssignment(new_node, inherited_cluster_id);
+  if (inherited_cluster_id >= 0) {
+    this->graph->AddNodeToCluster(new_node, inherited_cluster_id);
+  }
 }
 
 void ABM::FillSameYearSourceNodes(std::set<int> &same_year_source_nodes,
@@ -455,9 +459,10 @@ std::vector<int> ABM::GetGeneratorNodes(
 }
 
 bool ABM::ValidateBinBoundaries() {
-  this->logger.WriteToLogFile(std::to_string(this->neighborhood_search->bin_boundaries.size()) +
-                                  " bins have been created",
-                              Log::info);
+  this->logger.WriteToLogFile(
+      std::to_string(this->neighborhood_search->bin_boundaries.size()) +
+          " bins have been created",
+      Log::info);
   if (this->neighborhood_search->bin_boundaries.size() == 0) {
     this->logger.WriteToLogFile("At least one bin is required", Log::error);
     return false;
@@ -468,17 +473,21 @@ bool ABM::ValidateBinBoundaries() {
     return false;
   }
   std::string recency_bin_string;
-  for (size_t i = 0; i < this->neighborhood_search->bin_boundaries.size() - 1; i++) {
+  for (size_t i = 0; i < this->neighborhood_search->bin_boundaries.size() - 1;
+       i++) {
     recency_bin_string +=
-        ("[" + std::to_string(this->neighborhood_search->bin_boundaries.at(i)) + "," +
-         std::to_string(this->neighborhood_search->bin_boundaries.at(i + 1)) + "), ");
+        ("[" + std::to_string(this->neighborhood_search->bin_boundaries.at(i)) +
+         "," +
+         std::to_string(this->neighborhood_search->bin_boundaries.at(i + 1)) +
+         "), ");
   }
-  recency_bin_string += ("[" +
-                         std::to_string(this->neighborhood_search->bin_boundaries.at(
-                             this->neighborhood_search->bin_boundaries.size() - 1)) +
-                         ",infinity)");
-  this->logger.WriteToLogFile(
-      "Here are the bins: " + recency_bin_string, Log::info);
+  recency_bin_string +=
+      ("[" +
+       std::to_string(this->neighborhood_search->bin_boundaries.at(
+           this->neighborhood_search->bin_boundaries.size() - 1)) +
+       ",infinity)");
+  this->logger.WriteToLogFile("Here are the bins: " + recency_bin_string,
+                              Log::info);
   return true;
 }
 
@@ -505,11 +514,17 @@ bool ABM::ValidateArguments() {
                               this->recency_table, "")) {
     return false;
   }
+  if (!this->community_assignment.empty()) {
+    this->logger.WriteToLogFile(
+        "community_assignment: " + this->community_assignment +
+            " was read successfully from the config file",
+        Log::info);
+  }
   if (this->planted_nodes == "") {
     this->logger.WriteToLogFile("No agents will be planted", Log::info);
   } else {
-    this->logger.WriteToLogFile(
-        "planted_nodes: " + this->planted_nodes, Log::info);
+    this->logger.WriteToLogFile("planted_nodes: " + this->planted_nodes,
+                                Log::info);
   }
   if (this->clonal_cartel_agent_file == "") {
     this->logger.WriteToLogFile("No clonal cartel agents will be created",
@@ -678,6 +693,26 @@ bool ABM::ValidateArguments() {
     this->logger.WriteToLogFile(
         "Not using checkpointing. Starting simulation from the first year.",
         Log::info);
+  }
+  if (!this->community_assignment.empty()) {
+    if (!this->ValidateArgument("Agent", "theta", this->theta, -42)) {
+      return false;
+    }
+    if (this->theta <= 0) {
+      this->logger.WriteToLogFile(
+          "theta must be greater than zero when community_assignment is used",
+          Log::error);
+      return false;
+    }
+    this->logger.WriteToLogFile("theta: " + std::to_string(this->theta),
+                                Log::info);
+  } else {
+    if (this->theta != -42) {
+      this->logger.WriteToLogFile(
+          "theta is provided but community_assignment is not provided. Theta "
+          "will be ignored.",
+          Log::info);
+    }
   }
   if (!this->ValidateArgument("General", "output_file", this->output_file,
                               "")) {
@@ -1005,12 +1040,15 @@ void ABM::RunSimulationLoop() {
       // agent nodes
       int weight_span_index;
       try {
-        weight_span_index = this->continuous_node_mapping.at(new_node) - this->initial_graph_size;
-      } catch (const std::out_of_range& e) {
-        #pragma omp critical
+        weight_span_index = this->continuous_node_mapping.at(new_node) -
+                            this->initial_graph_size;
+      } catch (const std::out_of_range &e) {
+#pragma omp critical
         {
-            fprintf(stderr, "CRASH: continuous_node_mapping missing new_node %d\n", new_node);
-            fflush(stderr);
+          fprintf(stderr,
+                  "CRASH: continuous_node_mapping missing new_node %d\n",
+                  new_node);
+          fflush(stderr);
         }
         throw;
       }
@@ -1032,6 +1070,25 @@ void ABM::RunSimulationLoop() {
       std::unordered_map<int, std::vector<int>> n_hop_map =
           this->neighborhood_search->GetNeighborhoodMap(
               this->graph, current_year, generator_nodes, num_hops);
+
+      int cluster_id = this->graph->GetCommunityAssignment(new_node);
+
+      if (alpha > 0 && cluster_id >= 0 &&
+          this->graph->GetClusterSize(cluster_id) >= this->theta) {
+        const std::vector<int> &cluster_nodes =
+            this->graph->GetClusterNodes(cluster_id);
+        n_hop_map[1] = cluster_nodes;
+
+        if (n_hop_map.contains(2)) {
+          std::vector<int> pruned_2_hop;
+          for (int node : n_hop_map[2]) {
+            if (this->graph->GetCommunityAssignment(node) != cluster_id) {
+              pruned_2_hop.push_back(node);
+            }
+          }
+          n_hop_map[2] = pruned_2_hop;
+        }
+      }
 
       int num_cartel_citations_limit =
           std::round(this->cartel_outdegree_proportion *
@@ -1103,23 +1160,26 @@ void ABM::RunSimulationLoop() {
             sampled_neighborhood_sizes_map[i] +=
                 n_hop_map.at(current_neighborhood_index).size();
           } catch (...) {
-            #pragma omp critical
+#pragma omp critical
             {
-                fprintf(stderr, "CRASH: n_hop_map missing %d\n", (int)current_neighborhood_index);
-                fflush(stderr);
+              fprintf(stderr, "CRASH: n_hop_map missing %d\n",
+                      (int)current_neighborhood_index);
+              fflush(stderr);
             }
             throw;
           }
           std::unordered_map<int, std::vector<int>> binned_neighborhood;
           try {
             binned_neighborhood = this->neighborhood_search->BinNeighborhood(
-                  this->graph, current_year,
-                  n_hop_map.at(current_neighborhood_index));
+                this->graph, current_year,
+                n_hop_map.at(current_neighborhood_index));
           } catch (...) {
-            #pragma omp critical
+#pragma omp critical
             {
-                fprintf(stderr, "CRASH: n_hop_map missing in BinNeighborhood %d\n", (int)current_neighborhood_index);
-                fflush(stderr);
+              fprintf(stderr,
+                      "CRASH: n_hop_map missing in BinNeighborhood %d\n",
+                      (int)current_neighborhood_index);
+              fflush(stderr);
             }
             throw;
           }
@@ -1130,14 +1190,16 @@ void ABM::RunSimulationLoop() {
           std::unordered_map<int, int> outdegree_per_bin_map;
           try {
             outdegree_per_bin_map = this->neighborhood_search->BinOutdegrees(
-                  binned_neighborhood,
-                  num_citations_per_neighborhood.at(current_neighborhood_index),
-                  binned_recency_probabilities);
+                binned_neighborhood,
+                num_citations_per_neighborhood.at(current_neighborhood_index),
+                binned_recency_probabilities);
           } catch (...) {
-            #pragma omp critical
+#pragma omp critical
             {
-                fprintf(stderr, "CRASH: num_citations_per_neighborhood missing %d\n", (int)current_neighborhood_index);
-                fflush(stderr);
+              fprintf(stderr,
+                      "CRASH: num_citations_per_neighborhood missing %d\n",
+                      (int)current_neighborhood_index);
+              fflush(stderr);
             }
             throw;
           }
@@ -1301,46 +1363,43 @@ void ABM::FinalizeSimulation() {
   delete this->graph;
 }
 
-int ABM::main() {
-  if (!this->ValidateBinBoundaries()) {
-    return 1;
-  }
-
-  this->InitializeSimulation();
-  this->RunSimulationLoop();
-  this->FinalizeSimulation();
-
-  delete this->graph;
-  return 0;
-}
-
 void ABM::ReadCommunityAssignment() {
   if (this->community_assignment.empty()) {
     return;
   }
 
-  this->logger.WriteToLogFile("Attempting to read community assignment file: " + this->community_assignment, Log::info);
+  this->logger.WriteToLogFile("Attempting to read community assignment file: " +
+                                  this->community_assignment,
+                              Log::info);
   std::ifstream file(this->community_assignment);
   if (!file.is_open()) {
-    this->logger.WriteToLogFile("Error: Could not open community assignment file " + this->community_assignment, Log::error);
+    this->logger.WriteToLogFile(
+        "Error: Could not open community assignment file " +
+            this->community_assignment,
+        Log::error);
     throw std::runtime_error("Could not open community assignment file");
   }
 
   char delimiter = Utils::GetDelimiter(this->community_assignment);
-  auto header_map = Utils::GetHeaderToIndexMap(delimiter, this->community_assignment);
+  auto header_map =
+      Utils::GetHeaderToIndexMap(delimiter, this->community_assignment);
 
   if (!header_map.contains("node_id")) {
-    this->logger.WriteToLogFile("Error: Community assignment file must have 'node_id' column", Log::error);
+    this->logger.WriteToLogFile(
+        "Error: Community assignment file must have 'node_id' column",
+        Log::error);
     throw std::runtime_error("Invalid community assignment file schema");
   }
-  
+
   int cluster_id_idx = -1;
   if (header_map.contains("cluster_id")) {
     cluster_id_idx = header_map["cluster_id"];
   } else if (header_map.contains("comm_id")) {
     cluster_id_idx = header_map["comm_id"];
   } else {
-    this->logger.WriteToLogFile("Error: Community assignment file must have 'cluster_id' or 'comm_id' column", Log::error);
+    this->logger.WriteToLogFile("Error: Community assignment file must have "
+                                "'cluster_id' or 'comm_id' column",
+                                Log::error);
     throw std::runtime_error("Invalid community assignment file schema");
   }
 
@@ -1349,7 +1408,8 @@ void ABM::ReadCommunityAssignment() {
   std::string line;
   int line_no = 0;
 
-  // Need to read the file again since GetDelimiter / GetHeaderToIndexMap open and close it internally
+  // Need to read the file again since GetDelimiter / GetHeaderToIndexMap open
+  // and close it internally
   std::ifstream data_file(this->community_assignment);
   while (std::getline(data_file, line)) {
     if (line_no == 0) {
@@ -1365,7 +1425,7 @@ void ABM::ReadCommunityAssignment() {
     if (current_line.empty()) {
       break;
     }
-    
+
     // Some lines might be malformed
     if (current_line.size() <= (size_t)std::max(node_id_idx, cluster_id_idx)) {
       continue;
@@ -1375,7 +1435,24 @@ void ABM::ReadCommunityAssignment() {
     int cluster_id = std::stoi(current_line[cluster_id_idx]);
 
     this->graph->SetCommunityAssignment(node_id, cluster_id);
+    this->graph->AddNodeToCluster(node_id, cluster_id);
     line_no++;
   }
-  this->logger.WriteToLogFile("Successfully read community assignment file and assigned clusters to " + std::to_string(line_no - 1) + " nodes.", Log::info);
+  this->logger.WriteToLogFile(
+      "Successfully read community assignment file and assigned clusters to " +
+          std::to_string(line_no - 1) + " nodes.",
+      Log::info);
+}
+
+int ABM::main() {
+  if (!this->ValidateBinBoundaries()) {
+    return 1;
+  }
+
+  this->InitializeSimulation();
+  this->RunSimulationLoop();
+  this->FinalizeSimulation();
+
+  delete this->graph;
+  return 0;
 }

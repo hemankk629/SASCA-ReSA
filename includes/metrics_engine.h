@@ -82,9 +82,11 @@ public:
   simulation year, applying lag and peak durations to determine the node's
   current temporal relevance.
   */
-  static void FillFitnessSpan(
-      Graph *graph, const std::vector<int> &reverse_continuous_node_mapping,
-      int current_year, std::span<int> fitness_span, int fitness_decay_alpha, int current_graph_size);
+  static void
+  FillFitnessSpan(Graph *graph,
+                  const std::vector<int> &reverse_continuous_node_mapping,
+                  int current_year, std::span<int> fitness_span,
+                  int fitness_decay_alpha, int current_graph_size);
   /*
   Input: Graph *graph, const std::unordered_map<int, int>
   &continuous_node_mapping, std::span<int> author_reputation_span Output: void
