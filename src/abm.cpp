@@ -1453,6 +1453,5 @@ int ABM::main() {
   this->RunSimulationLoop();
   this->FinalizeSimulation();
 
-  delete this->graph;
   return 0;
 }
