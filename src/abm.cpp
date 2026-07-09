@@ -37,11 +37,11 @@ std::unordered_map<int, double> ABM::GetBinnedRecencyProbabilities() {
 std::unordered_map<int, int> ABM::BuildContinuousNodeMapping(Graph *graph) {
   this->next_node_id = 0;
   std::unordered_map<int, int> continuous_node_mapping;
-  for (auto const &node : this->graph->GetNodeSet()) {
-    this->continuous_node_mapping[node] = this->next_node_id;
+  for (auto const &node : graph->GetNodeSet()) {
+    continuous_node_mapping[node] = this->next_node_id;
     this->next_node_id++;
   }
-  return this->continuous_node_mapping;
+  return continuous_node_mapping;
 }
 
 std::vector<int>
@@ -54,9 +54,9 @@ ABM::ReverseMapping(const std::unordered_map<int, int> &mapping) {
 }
 
 void ABM::InitializeFitness(Graph *graph) {
-  this->AssignPeakFitnessValues(this->graph, this->graph->GetNodeSet());
-  this->AssignFitnessLagDuration(this->graph, this->graph->GetNodeSet());
-  this->AssignFitnessPeakDuration(this->graph, this->graph->GetNodeSet());
+  this->AssignPeakFitnessValues(graph, graph->GetNodeSet());
+  this->AssignFitnessLagDuration(graph, graph->GetNodeSet());
+  this->AssignFitnessPeakDuration(graph, graph->GetNodeSet());
 }
 
 std::unordered_map<int, int>
@@ -70,7 +70,7 @@ ABM::PlantNodes(Graph *graph, std::span<double> pa_weight_span,
                 std::span<int> fitness_peak_duration_span,
                 std::span<int> num_authors_span,
                 std::span<int> planted_author_id_span) {
-  int current_graph_size = this->graph->GetNodeSet().size();
+  int current_graph_size = graph->GetNodeSet().size();
   this->initial_graph_size = current_graph_size;
   const std::unordered_map<std::string, std::pair<std::string, void *>>
       column_header_to_type_span_map = {
@@ -141,8 +141,8 @@ ABM::PlantNodes(Graph *graph, std::span<double> pa_weight_span,
 int ABM::GetMaxYear(Graph *graph) {
   int max_year = -1;
   bool is_first = true;
-  for (auto const &node : this->graph->GetNodeSet()) {
-    int current_node_year = this->graph->GetYear(node);
+  for (auto const &node : graph->GetNodeSet()) {
+    int current_node_year = graph->GetYear(node);
     if (is_first) {
       max_year = current_node_year;
       is_first = false;
@@ -157,7 +157,7 @@ int ABM::GetMaxYear(Graph *graph) {
 int ABM::GetMaxNode(Graph *graph) {
   int max_node = -1;
   bool is_first = true;
-  for (auto const &node : this->graph->GetNodeSet()) {
+  for (auto const &node : graph->GetNodeSet()) {
     if (is_first) {
       max_node = node;
       is_first = false;
@@ -170,7 +170,7 @@ int ABM::GetMaxNode(Graph *graph) {
 }
 
 int ABM::GetFinalGraphSize(Graph *graph) {
-  int current_graph_size = this->graph->GetNodeSet().size();
+  int current_graph_size = graph->GetNodeSet().size();
   for (int i = 0; i < this->num_cycles; i++) {
     int num_new_nodes = std::ceil(current_graph_size * this->growth_rate);
     current_graph_size += num_new_nodes;
@@ -184,22 +184,21 @@ void ABM::UpdateGraphAttributesWeights(
     std::span<double> num_authors_weight_span,
     std::span<double> author_reputation_weight_span, int len) {
   for (int i = 0; i < len; i++) {
-    int current_node_id = this->next_node_id + i;
-    this->graph->SetPaWeight(current_node_id, this->pa_weight_vec[i]);
-    this->graph->SetFitWeight(current_node_id, this->fit_weight_vec[i]);
-    this->graph->SetNumAuthorsWeight(current_node_id,
-                                     this->num_authors_weight_vec[i]);
-    this->graph->SetAuthorReputationWeight(
-        current_node_id, this->author_reputation_weight_vec[i]);
+    int current_node_id = next_node_id + i;
+    graph->SetPaWeight(current_node_id, pa_weight_span[i]);
+    graph->SetFitWeight(current_node_id, fit_weight_span[i]);
+    graph->SetNumAuthorsWeight(current_node_id, num_authors_weight_span[i]);
+    graph->SetAuthorReputationWeight(current_node_id,
+                                     author_reputation_weight_span[i]);
   }
 }
 
 void ABM::UpdateGraphAttributesNumAuthors(
     Graph *graph, const std::unordered_map<int, int> &continuous_node_mapping,
     std::span<int> num_authors_span) {
-  for (auto const &node_id : this->graph->GetNodeSet()) {
-    int continuous_id = this->continuous_node_mapping.at(node_id);
-    this->graph->SetNumAuthors(node_id, this->num_authors_vec[continuous_id]);
+  for (auto const &node_id : graph->GetNodeSet()) {
+    int continuous_id = continuous_node_mapping.at(node_id);
+    graph->SetNumAuthors(node_id, num_authors_span[continuous_id]);
   }
 }
 
@@ -208,9 +207,9 @@ void ABM::UpdateGraphAttributesInitialAuthorReputations(
   for (size_t i = 0; i < new_nodes_vec.size(); i++) {
     int current_node_id = new_nodes_vec.at(i);
     int current_author_reputation =
-        this->graph->GetAuthorReputationForNode(current_node_id);
-    this->graph->SetInitialAuthorReputation(current_node_id,
-                                            current_author_reputation);
+        graph->GetAuthorReputationForNode(current_node_id);
+    graph->SetInitialAuthorReputation(current_node_id,
+                                      current_author_reputation);
   }
 }
 
@@ -223,17 +222,13 @@ void ABM::UpdateGraphAttributesFitnesses(
   for (size_t i = 0; i < new_nodes_vec.size(); i++) {
     int current_node_id = new_nodes_vec.at(i);
     int current_weight_span_index =
-        this->continuous_node_mapping.at(current_node_id) -
-        this->initial_graph_size;
-    this->graph->SetFitnessLagDuration(
-        current_node_id,
-        this->fitness_lag_duration_vec[current_weight_span_index]);
-    this->graph->SetFitnessPeakValue(
-        current_node_id,
-        this->fitness_peak_value_vec[current_weight_span_index]);
-    this->graph->SetFitnessPeakDuration(
-        current_node_id,
-        this->fitness_peak_duration_vec[current_weight_span_index]);
+        continuous_node_mapping.at(current_node_id) - initial_graph_size;
+    graph->SetFitnessLagDuration(
+        current_node_id, fitness_lag_duration_span[current_weight_span_index]);
+    graph->SetFitnessPeakValue(
+        current_node_id, fitness_peak_value_span[current_weight_span_index]);
+    graph->SetFitnessPeakDuration(
+        current_node_id, fitness_peak_duration_span[current_weight_span_index]);
   }
 }
 
@@ -241,17 +236,17 @@ void ABM::UpdateGraphAttributesPlantedNodesLineNumbers(
     Graph *graph, int next_node_id,
     const std::unordered_map<int, int> &planted_nodes_line_number_map) {
   for (auto const &[weight_span_index, line_no] :
-       this->planted_nodes_line_number_map) {
-    int current_node_id = this->next_node_id + weight_span_index;
-    this->graph->SetPlantedNodesLineNumber(current_node_id, line_no);
+       planted_nodes_line_number_map) {
+    int current_node_id = next_node_id + weight_span_index;
+    graph->SetPlantedNodesLineNumber(current_node_id, line_no);
   }
 }
 
 void ABM::UpdateGraphAttributesAlphas(Graph *graph, int next_node_id,
                                       std::span<double> alpha_span, int len) {
   for (int i = 0; i < len; i++) {
-    int current_node_id = this->next_node_id + i;
-    this->graph->SetAlpha(current_node_id, this->alpha_vec[i]);
+    int current_node_id = next_node_id + i;
+    graph->SetAlpha(current_node_id, alpha_span[i]);
   }
 }
 
@@ -259,8 +254,8 @@ void ABM::UpdateGraphAttributesOutDegrees(Graph *graph, int next_node_id,
                                           std::span<int> out_degree_span,
                                           int len) {
   for (int i = 0; i < len; i++) {
-    int current_node_id = this->next_node_id + i;
-    this->graph->SetAssignedOutDegree(current_node_id, this->out_degree_vec[i]);
+    int current_node_id = next_node_id + i;
+    graph->SetAssignedOutDegree(current_node_id, out_degree_span[i]);
   }
 }
 
@@ -268,7 +263,7 @@ std::vector<int> ABM::GetGraphAttributesGeneratorNodes(Graph *graph,
                                                        int new_node) const {
   std::vector<int> generator_nodes;
   const std::string &generator_node_string =
-      this->graph->GetGeneratorNodeString(new_node);
+      graph->GetGeneratorNodeString(new_node);
   std::stringstream ss(generator_node_string);
   std::string current_value;
   while (std::getline(ss, current_value, ';')) {
@@ -279,8 +274,8 @@ std::vector<int> ABM::GetGraphAttributesGeneratorNodes(Graph *graph,
 
 void ABM::UpdateGraphAttributesAuthors(Graph *graph, int new_node,
                                        int author_id) {
-  this->graph->SetAuthorId(new_node, author_id);
-  this->graph->UpdateAuthorPublicationMap(author_id, new_node);
+  graph->SetAuthorId(new_node, author_id);
+  graph->UpdateAuthorPublicationMap(author_id, new_node);
 }
 
 void ABM::UpdateGraphAttributesGeneratorNodes(
@@ -289,17 +284,16 @@ void ABM::UpdateGraphAttributesGeneratorNodes(
   int inherited_cluster_id = -1;
   if (!generator_nodes.empty()) {
     generator_node_string += std::to_string(generator_nodes.at(0));
-    inherited_cluster_id =
-        this->graph->GetCommunityAssignment(generator_nodes.at(0));
+    inherited_cluster_id = graph->GetCommunityAssignment(generator_nodes.at(0));
     for (size_t i = 1; i < generator_nodes.size(); i++) {
       generator_node_string += ";";
       generator_node_string += std::to_string(generator_nodes.at(i));
     }
   }
-  this->graph->SetGeneratorNodeString(new_node, generator_node_string);
-  this->graph->SetCommunityAssignment(new_node, inherited_cluster_id);
+  graph->SetGeneratorNodeString(new_node, generator_node_string);
+  graph->SetCommunityAssignment(new_node, inherited_cluster_id);
   if (inherited_cluster_id >= 0) {
-    this->graph->AddNodeToCluster(new_node, inherited_cluster_id);
+    graph->AddNodeToCluster(new_node, inherited_cluster_id);
   }
 }
 
@@ -323,15 +317,14 @@ void ABM::FillSameYearSourceNodes(std::set<int> &same_year_source_nodes,
 
 std::vector<int> ABM::GetCartelGeneratorNodes(Graph *graph, int author_id) {
   std::vector<int> cartel_generator_nodes;
-  int cartel_id = this->graph->GetCartelID(author_id);
-  const std::set<int> node_set = this->graph->GetNodeSet();
-  for (auto const &cartel_author_id :
-       this->graph->GetCartelAuthors(cartel_id)) {
+  int cartel_id = graph->GetCartelID(author_id);
+  const std::set<int> node_set = graph->GetNodeSet();
+  for (auto const &cartel_author_id : graph->GetCartelAuthors(cartel_id)) {
     if (cartel_author_id == author_id) {
       continue;
     }
     std::vector<int> cartel_author_publications =
-        this->graph->GetAuthorPublications(cartel_author_id);
+        graph->GetAuthorPublications(cartel_author_id);
     for (const auto &cartel_author_publication : cartel_author_publications) {
       if (!node_set.contains(cartel_author_publication)) {
         continue;
@@ -353,34 +346,34 @@ std::vector<int> ABM::GetEligibleGeneratorNodes(
   std::vector<std::pair<double, int>> in_degree_eligible_generator_nodes;
   std::vector<std::pair<double, int>> fitness_eligible_generator_nodes;
   std::vector<int> eligible_generator_nodes;
-  if (current_year - this->start_year <= recency_threshold) {
+  if (current_year - start_year <= recency_threshold) {
     for (int i = graph_size - 1; i >= 0; i--) {
-      int current_node_id = this->reverse_continuous_node_mapping[i];
-      if ((current_year - this->graph->GetYear(current_node_id)) >
+      int current_node_id = reverse_continuous_node_mapping[i];
+      if ((current_year - graph->GetYear(current_node_id)) >
           recency_threshold) {
       } else {
         in_degree_eligible_generator_nodes.push_back(
-            {this->in_degree_vec[i], current_node_id});
-        if (this->graph->GetType(current_node_id) == Graph::NodeType::Seed) {
+            {in_degree_span[i], current_node_id});
+        if (graph->GetType(current_node_id) == Graph::NodeType::Seed) {
           fitness_eligible_generator_nodes.push_back(
               {this->fitness_value_max, current_node_id});
         } else {
           fitness_eligible_generator_nodes.push_back(
-              {this->fitness_vec[i], current_node_id});
+              {fitness_span[i], current_node_id});
         }
       }
     }
   } else {
     for (int i = graph_size - 1; i >= 0; i--) {
-      int current_node_id = this->reverse_continuous_node_mapping[i];
-      if ((current_year - this->graph->GetYear(current_node_id)) >
+      int current_node_id = reverse_continuous_node_mapping[i];
+      if ((current_year - graph->GetYear(current_node_id)) >
           recency_threshold) {
         break;
       }
       in_degree_eligible_generator_nodes.push_back(
-          {this->in_degree_vec[i], current_node_id});
+          {in_degree_span[i], current_node_id});
       fitness_eligible_generator_nodes.push_back(
-          {this->fitness_vec[i], current_node_id});
+          {fitness_span[i], current_node_id});
     }
   }
   int in_degree_top_n_nodes_index =
@@ -446,13 +439,13 @@ std::vector<int> ABM::GetGeneratorNodes(
     Graph *graph, const std::vector<int> &reverse_continuous_node_mapping) {
   std::vector<int> generator_nodes;
   std::uniform_int_distribution<int> generator_uniform_distribution{
-      0, (int)(this->graph->GetNodeSet().size() - 1)};
+      0, (int)(graph->GetNodeSet().size() - 1)};
   int num_generator_nodes = 1;
   pcg32 &generator = Utils::GetThreadLocalPRNG();
   for (int i = 0; i < num_generator_nodes; i++) {
     int continuous_generator_node = generator_uniform_distribution(generator);
     int generator_node =
-        this->reverse_continuous_node_mapping[continuous_generator_node];
+        reverse_continuous_node_mapping[continuous_generator_node];
     generator_nodes.push_back(generator_node);
   }
   return generator_nodes;

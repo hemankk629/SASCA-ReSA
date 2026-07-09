@@ -231,43 +231,26 @@ public:
   /*
   Input: None
   Output: void
-  Description: Parses historical empirical out-degree distributions from disk to
-  populate the out_degree_bag_vec used for random node generation.
-  */
-  void ReadOutDegreeBag();
-  /*
-  Input: None
-  Output: void
-  Description: Loads empirical citation recency decay probabilities (e.g.,
-  probability of citing a paper 1 year old vs 10 years old).
-  */
-  void ReadRecencyProbabilities();
-  /*
-  Input: None
-  Output: void
-  Description: Parses the list of 'planted' cartel nodes from configuration,
-  injecting deterministic bad actors into the simulation timeline.
-  */
-  void ReadPlantedNodes();
-  /*
-  Input: None
-  Output: void
   Description: Reads the community cluster assignments from the CSV file
   specified in the configuration and populates the graph with this inherited
   clustering data.
   */
   void ReadCommunityAssignment();
-  std::unordered_map<int, int> BuildContinuousNodeMapping(Graph *graph);
-  std::vector<int> ReverseMapping(const std::unordered_map<int, int> &mapping);
   /*
-  Input: Graph *graph, const std::vector<int> &base_vec, const
-  std::unordered_map<int, int> &reverse_continuous_node_mapping Output:
-  std::vector<int> (complement nodes) Description: Returns all continuous node
-  IDs in the graph that are NOT present in the provided base vector.
+  Input: Graph *graph
+  Output: std::unordered_map<int, int> (continuous node mapping)
+  Description: Builds a mapping from potentially non-contiguous graph node IDs
+  to a continuous, 0-indexed integer range, which is required for array
+  allocations.
   */
-  std::vector<int>
-  GetComplement(Graph *graph, const std::vector<int> &base_vec,
-                const std::vector<int> &reverse_continuous_node_mapping);
+  std::unordered_map<int, int> BuildContinuousNodeMapping(Graph *graph);
+  /*
+  Input: const std::unordered_map<int, int> &mapping
+  Output: std::vector<int> (reverse mapping)
+  Description: Inverts the continuous node mapping, returning a vector where the
+  index is the continuous ID and the value is the original graph node ID.
+  */
+  std::vector<int> ReverseMapping(const std::unordered_map<int, int> &mapping);
   /*
   Input: Graph *graph
   Output: int (total projected size)
@@ -361,18 +344,6 @@ public:
   */
   void FillSameYearSourceNodes(std::set<int> &same_year_source_nodes,
                                int current_year_new_nodes);
-
-  /*
-  Input: std::unordered_map<int, std::vector<int>>
-  &one_and_two_hop_neighborhood_map, int neighborhood_size_threshold, int
-  max_neighborhood_size Output: void Description: Prunes excessively large 1-hop
-  and 2-hop neighborhoods down to a configured maximum size via uniform sampling
-  to maintain computational feasibility.
-  */
-  void SampleFromNeighborhoods(std::unordered_map<int, std::vector<int>>
-                                   &one_and_two_hop_neighborhood_map,
-                               int neighborhood_size_threshold,
-                               int max_neighborhood_size);
 
   /*
   Input: Graph *graph, int next_node_id, std::span<double> pa_weight_span,
