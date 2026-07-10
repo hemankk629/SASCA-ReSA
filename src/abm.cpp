@@ -1070,7 +1070,15 @@ void ABM::RunSimulationLoop() {
           this->graph->GetClusterSize(cluster_id) >= this->theta) {
         const std::vector<int> &cluster_nodes =
             this->graph->GetClusterNodes(cluster_id);
-        n_hop_map[1] = cluster_nodes;
+        std::vector<int> filtered_cluster_nodes;
+        filtered_cluster_nodes.reserve(cluster_nodes.size());
+        for (int node : cluster_nodes) {
+          if (std::find(generator_nodes.begin(), generator_nodes.end(), node) ==
+              generator_nodes.end()) {
+            filtered_cluster_nodes.push_back(node);
+          }
+        }
+        n_hop_map[1] = filtered_cluster_nodes;
 
         if (n_hop_map.contains(2)) {
           std::vector<int> pruned_2_hop;
@@ -1240,12 +1248,16 @@ void ABM::RunSimulationLoop() {
           this->logger.LocalLogTime(local_parallel_stage_time_vec,
                                     local_prev_time, "make random citations");
 
+      std::set<int> unique_cited_nodes;
       for (size_t j = 0; j < generator_nodes.size(); j++) {
         if (generator_nodes[j] < 0) {
           std::cerr << "generator node negative: "
                     << std::to_string(generator_nodes[j]) << std::endl;
         }
-        local_new_edges_vec.push_back({new_node, generator_nodes[j]});
+        if (unique_cited_nodes.find(generator_nodes[j]) == unique_cited_nodes.end()) {
+          local_new_edges_vec.push_back({new_node, generator_nodes[j]});
+          unique_cited_nodes.insert(generator_nodes[j]);
+        }
       }
       for (int j = 0; j < num_actually_cited; j++) {
         if (citations[j] < 0) {
@@ -1255,7 +1267,10 @@ void ABM::RunSimulationLoop() {
           std::cerr << "num_actually_cited: "
                     << std::to_string(num_actually_cited) << std::endl;
         }
-        local_new_edges_vec.push_back({new_node, citations[j]});
+        if (unique_cited_nodes.find(citations[j]) == unique_cited_nodes.end()) {
+          local_new_edges_vec.push_back({new_node, citations[j]});
+          unique_cited_nodes.insert(citations[j]);
+        }
       }
       new_edges_vec.insert(new_edges_vec.end(), local_new_edges_vec.begin(),
                            local_new_edges_vec.end());
